@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+backend/.venv/
+backend/coalmind.db
+backend/storage/uploads/*
+!backend/storage/uploads/.gitkeep
+
+# Node
+frontend/node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+# Env / OS
+.env
+.DS_Store
+Thumbs.db
+.claude/

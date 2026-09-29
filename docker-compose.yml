@@ -1,0 +1,28 @@
+# CoalMind AI — on-premise deployment (demo configuration)
+services:
+  backend:
+    build: ./backend
+    environment:
+      - SECRET_KEY=${SECRET_KEY:-coalmind-demo-secret-change-me}
+      - DATABASE_URL=sqlite:////app/storage/coalmind.db
+      - LLM_PROVIDER=${LLM_PROVIDER:-mock}
+      - LLM_BASE_URL=${LLM_BASE_URL:-http://ollama:11434/v1}
+      - LLM_MODEL=${LLM_MODEL:-llama3.1:8b-instruct}
+      - CORS_ORIGINS=http://localhost:8080
+    volumes:
+      - coalmind-data:/app/storage
+    ports: ["8000:8000"]
+  frontend:
+    build: ./frontend
+    depends_on: [backend]
+    ports: ["8080:80"]
+  # Optional: local open-weight LLM. Start with `docker compose --profile llm up`
+  # then set LLM_PROVIDER=openai_compatible and `docker exec -it <ollama> ollama pull llama3.1:8b-instruct`
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["llm"]
+    volumes: [ollama:/root/.ollama]
+    ports: ["11434:11434"]
+volumes:
+  coalmind-data:
+  ollama:
