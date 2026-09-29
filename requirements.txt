@@ -1,0 +1,6 @@
+# Python dependencies for the Vercel serverless API (api/index.py)
+fastapi>=0.110,<1.0
+sqlalchemy>=2.0
+pydantic>=2.6
+python-multipart>=0.0.9
+psycopg[binary]>=3.1

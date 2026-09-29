@@ -20,7 +20,8 @@ from app.models.models import OTPChallenge, User
 from app.schemas.schemas import LoginRequest, OTPRequest, OTPVerify
 from app.services import audit_service
 from app.utils.security import (OTP_COOLDOWN, OTP_MAX_ATTEMPTS, OTP_TTL, OTP_WINDOW_LIMIT, ROLE_DESIGNATION, SHOW_DEMO_OTP, TOKEN_TTL,
-                                current_user, hash_password, make_token, mask_mobile, new_otp, normalize_mobile, otp_hash, user_dict)
+                                current_user, hash_password, make_token, mask_mobile, new_otp, normalize_mobile, otp_hash, read_payload,
+                                sign_payload, user_dict)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 ROLE_NAMES = {"admin": "Administrator", "geological_officer": "Geological Officer", "management": "Management", "viewer": "Viewer"}
@@ -55,7 +56,9 @@ def request_otp(body: OTPRequest, db: Session = Depends(get_db)):
     code = new_otp()
     db.add(OTPChallenge(mobile=mobile, role=body.role, code_hash=otp_hash(mobile, code), expires_at=now + timedelta(seconds=OTP_TTL)))
     db.commit()
-    out = {"sent": True, "mobile": mask_mobile(mobile), "is_new_user": user is None, "expires_in": OTP_TTL,
+    # signed challenge: lets verification succeed on a different serverless instance (holds only the HMAC of the code)
+    challenge = sign_payload({"mob": mobile, "role": body.role, "h": otp_hash(mobile, code)}, OTP_TTL)
+    out = {"sent": True, "challenge": challenge, "mobile": mask_mobile(mobile), "is_new_user": user is None, "expires_in": OTP_TTL,
            "resend_in": OTP_COOLDOWN, "name": user.name if user else None}
     if SHOW_DEMO_OTP:
         out["demo_otp"] = code  # demo only — would be delivered by SMS in production
@@ -70,26 +73,34 @@ def verify_otp(body: OTPVerify, db: Session = Depends(get_db)):
     user = db.query(User).filter_by(mobile=mobile).first()
     _check_role(user, body.role)
     ch = db.query(OTPChallenge).filter_by(mobile=mobile, consumed=False).order_by(OTPChallenge.created_at.desc()).first()
-    if ch is None:
-        raise HTTPException(400, "No active OTP. Please request a new one.")
-    if ch.role != body.role:
-        raise HTTPException(400, "The OTP was issued for a different role. Please request a new OTP.")
-    if ch.expires_at < datetime.utcnow():
-        ch.consumed = True
-        db.commit()
-        raise HTTPException(400, "OTP expired. Please request a new one.")
-    if ch.attempts >= OTP_MAX_ATTEMPTS:
-        ch.consumed = True
-        db.commit()
-        raise HTTPException(429, "Too many incorrect attempts. Please request a new OTP.")
-    if not secrets.compare_digest(ch.code_hash, otp_hash(mobile, body.otp.strip())):
+    signed = read_payload(body.challenge) if body.challenge else None
+    if signed is not None and (signed.get("mob") != mobile or signed.get("role") != body.role):
+        signed = None
+    if ch is None and signed is None:
+        raise HTTPException(400, "No active OTP (or it expired). Please request a new one.")
+    if ch is not None:
+        if ch.role != body.role:
+            raise HTTPException(400, "The OTP was issued for a different role. Please request a new OTP.")
+        if ch.expires_at < datetime.utcnow():
+            ch.consumed = True
+            db.commit()
+            raise HTTPException(400, "OTP expired. Please request a new one.")
+        if ch.attempts >= OTP_MAX_ATTEMPTS:
+            ch.consumed = True
+            db.commit()
+            raise HTTPException(429, "Too many incorrect attempts. Please request a new OTP.")
+    expected = ch.code_hash if ch is not None else signed["h"]
+    if not secrets.compare_digest(expected, otp_hash(mobile, body.otp.strip())):
+        if ch is None:
+            raise HTTPException(401, "Incorrect OTP. Please try again.")
         ch.attempts += 1
         left = OTP_MAX_ATTEMPTS - ch.attempts
         audit_service.log(db, user=mask_mobile(mobile), role=body.role, action="Failed OTP verification", category="auth", status="Rejected",
                           source="Mobile OTP", owner_id=user.id if user else None, details={"attempts_left": left})
         db.commit()
         raise HTTPException(401, f"Incorrect OTP. {left} attempt{'s' if left != 1 else ''} left.")
-    ch.consumed = True
+    if ch is not None:
+        ch.consumed = True
 
     created = False
     if user is None:
@@ -114,7 +125,7 @@ def verify_otp(body: OTPVerify, db: Session = Depends(get_db)):
     audit_service.log(db, owner_id=user.id, user=user.name, role=user.role, action="Signed in", category="auth", status="Success",
                       source=f"Mobile OTP · {mask_mobile(mobile)}", commit=True)
     ud = user_dict(user)
-    return {"token": make_token(user.id), "expires_in": TOKEN_TTL, "user": ud, "created": created, "redirect": ud["dashboard"]}
+    return {"token": make_token(user), "expires_in": TOKEN_TTL, "user": ud, "created": created, "redirect": ud["dashboard"]}
 
 
 @router.post("/login")
@@ -126,7 +137,7 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
     user.last_login = datetime.utcnow()
     audit_service.log(db, owner_id=user.id, user=user.name, role=user.role, action="Signed in", category="auth", status="Success",
                       source=f"Employee ID {user.employee_id}", commit=True)
-    return {"token": make_token(user.id), "expires_in": TOKEN_TTL, "user": user_dict(user)}
+    return {"token": make_token(user), "expires_in": TOKEN_TTL, "user": user_dict(user)}
 
 
 @router.get("/me")

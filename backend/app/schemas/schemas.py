@@ -18,6 +18,7 @@ class OTPVerify(BaseModel):
     otp: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")
     name: str | None = Field(default=None, max_length=80)
     department: str | None = Field(default=None, max_length=120)
+    challenge: str | None = Field(default=None, max_length=600)
 
 
 class ResolveRequest(BaseModel):

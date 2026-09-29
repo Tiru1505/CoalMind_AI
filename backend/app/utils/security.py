@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import json
 import os
 import re
 import secrets
@@ -67,21 +68,50 @@ def hash_password(pw: str) -> str:
     return hashlib.sha256(("cm$" + pw).encode()).hexdigest()
 
 
-def make_token(user_id: int) -> str:
-    payload = f"{user_id}:{int(time.time()) + TOKEN_TTL}"
-    sig = hmac.new(SECRET, payload.encode(), hashlib.sha256).hexdigest()[:32]
-    return base64.urlsafe_b64encode(f"{payload}:{sig}".encode()).decode()
+def sign_payload(data: dict, ttl: int) -> str:
+    """Compact HMAC-signed token (payload is signed, not encrypted — never put secrets in it)."""
+    body = base64.urlsafe_b64encode(json.dumps({**data, "exp": int(time.time()) + ttl}, separators=(",", ":")).encode()).decode()
+    sig = hmac.new(SECRET, body.encode(), hashlib.sha256).hexdigest()[:40]
+    return f"{body}.{sig}"
 
 
-def read_token(token: str) -> int | None:
+def read_payload(token: str) -> dict | None:
     try:
-        uid, exp, sig = base64.urlsafe_b64decode(token.encode()).decode().split(":")
+        body, sig = token.rsplit(".", 1)
+        if not hmac.compare_digest(sig, hmac.new(SECRET, body.encode(), hashlib.sha256).hexdigest()[:40]):
+            return None
+        data = json.loads(base64.urlsafe_b64decode(body.encode()))
     except Exception:
         return None
-    expected = hmac.new(SECRET, f"{uid}:{exp}".encode(), hashlib.sha256).hexdigest()[:32]
-    if not hmac.compare_digest(sig, expected) or int(exp) < time.time():
-        return None
-    return int(uid)
+    return data if data.get("exp", 0) >= time.time() else None
+
+
+def make_token(user: User) -> str:
+    # The session carries the user's identity so a fresh serverless instance can
+    # re-create the account (and its workspace) if its local demo database was reset.
+    return sign_payload({"uid": user.id, "mob": user.mobile, "emp": user.employee_id, "role": user.role,
+                         "name": user.name, "dept": user.department}, TOKEN_TTL)
+
+
+def _resolve_user(db: Session, data: dict) -> User | None:
+    user = db.get(User, data.get("uid"))
+    if user is not None and (user.mobile or None) == (data.get("mob") or None) and user.employee_id == data.get("emp"):
+        return user
+    if data.get("mob"):
+        user = db.query(User).filter_by(mobile=data["mob"]).first()
+    elif data.get("emp"):
+        user = db.query(User).filter_by(employee_id=data["emp"]).first()
+    if user is not None or not data.get("mob") or data.get("role") not in PERMISSIONS:
+        return user
+    # account not present on this instance (serverless cold start) — restore it with a fresh workspace
+    from app.database.seed import provision_workspace
+    user = User(employee_id=data.get("emp") or f"CM{secrets.randbelow(900000) + 100000}", mobile=data["mob"],
+                password=hash_password(secrets.token_hex(16)), name=data.get("name") or "User", role=data["role"],
+                designation=ROLE_DESIGNATION[data["role"]], department=data.get("dept") or "CMPDI", email="")
+    db.add(user)
+    db.flush()
+    provision_workspace(db, user, with_history=False)
+    return user
 
 
 def user_dict(u: User) -> dict:
@@ -93,8 +123,8 @@ def user_dict(u: User) -> dict:
 
 def current_user(authorization: str = Header(default=""), db: Session = Depends(get_db)) -> dict:
     token = authorization.removeprefix("Bearer ").strip()
-    uid = read_token(token) if token else None
-    user = db.get(User, uid) if uid else None
+    data = read_payload(token) if token else None
+    user = _resolve_user(db, data) if data else None
     if user is None or not user.active:
         raise HTTPException(status_code=401, detail="Session expired or invalid. Please sign in again.")
     return user_dict(user)

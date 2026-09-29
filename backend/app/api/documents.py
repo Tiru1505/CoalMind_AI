@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.api import serializers as S
-from app.database.db import BASE_DIR, get_db
+from app.database.db import WRITABLE_DIR, get_db
 from app.models.models import Document, DocumentPage, ExtractedField
 from app.services import audit_service, document_processor
 from app.services.ocr_service import FileValidationError, parse_structure, validate_file
@@ -14,7 +14,7 @@ from app.services.validation_service import doc_fields
 from app.utils.security import current_user, require
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
-UPLOAD_DIR = BASE_DIR / "storage" / "uploads"
+UPLOAD_DIR = WRITABLE_DIR / "storage" / "uploads"
 
 
 def _get(db: Session, doc_id: int, user: dict) -> Document:
@@ -59,7 +59,7 @@ async def upload(file: UploadFile = File(...), db: Session = Depends(get_db), us
     doc = Document(owner_id=user["id"], filename=safe, title=title, file_type=ext, doc_category=profile["category"], mine_id=mine.id if mine else None,
                    mine_label=mine.short_name if mine else "Unassigned", financial_year=profile["fy"], source_kind=info.source_kind,
                    pages=info.pages, size_kb=max(1, len(data) // 1024), uploaded_by=user["name"], status="Uploaded",
-                   topics=profile.get("topics", []), storage_path=str(path.relative_to(BASE_DIR)))
+                   topics=profile.get("topics", []), storage_path=str(path.relative_to(WRITABLE_DIR)))
     db.add(doc)
     db.flush()
     audit_service.for_user(db, user, action="Uploaded document", category="upload", status="Uploaded",

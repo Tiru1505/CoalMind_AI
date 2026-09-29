@@ -80,9 +80,9 @@ export interface SystemInfo {
 export const api = {
   login: (employee_id: string, password: string) => post<{ token: string; user: User }>('/auth/login', { employee_id, password }),
   requestOtp: (mobile: string, role: string) =>
-    post<{ sent: boolean; mobile: string; is_new_user: boolean; expires_in: number; resend_in: number; name: string | null; demo_otp?: string }>(
+    post<{ sent: boolean; challenge: string; mobile: string; is_new_user: boolean; expires_in: number; resend_in: number; name: string | null; demo_otp?: string }>(
       '/auth/otp/request', { mobile, role }),
-  verifyOtp: (body: { mobile: string; role: string; otp: string; name?: string; department?: string }) =>
+  verifyOtp: (body: { mobile: string; role: string; otp: string; name?: string; department?: string; challenge?: string }) =>
     post<{ token: string; user: User; created: boolean; redirect: string }>('/auth/otp/verify', body),
   me: () => get<User>('/auth/me'),
   logout: () => post('/auth/logout'),

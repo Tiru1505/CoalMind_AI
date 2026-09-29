@@ -31,7 +31,7 @@ export default function LoginPage() {
   const [otp, setOtp] = useState<string[]>(Array(6).fill(''))
   const [name, setName] = useState('')
   const [dept, setDept] = useState('')
-  const [info, setInfo] = useState<{ masked: string; isNew: boolean; demoOtp?: string; existingName: string | null } | null>(null)
+  const [info, setInfo] = useState<{ masked: string; isNew: boolean; demoOtp?: string; existingName: string | null; challenge: string } | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [resendIn, setResendIn] = useState(0)
@@ -59,7 +59,7 @@ export default function LoginPage() {
     setBusy(true)
     try {
       const r = await api.requestOtp(digits, role)
-      setInfo({ masked: r.mobile, isNew: r.is_new_user, demoOtp: r.demo_otp, existingName: r.name })
+      setInfo({ masked: r.mobile, isNew: r.is_new_user, demoOtp: r.demo_otp, existingName: r.name, challenge: r.challenge })
       setOtp(Array(6).fill(''))
       setResendIn(r.resend_in)
       setExpiresIn(r.expires_in)
@@ -80,7 +80,7 @@ export default function LoginPage() {
     if (info?.isNew && name.trim().length < 2) { setErr('Enter your full name to create your account.'); return }
     setBusy(true)
     try {
-      const r = await api.verifyOtp({ mobile: digits, role: role!, otp: code, name: info?.isNew ? name.trim() : undefined, department: dept.trim() || undefined })
+      const r = await api.verifyOtp({ mobile: digits, role: role!, otp: code, name: info?.isNew ? name.trim() : undefined, department: dept.trim() || undefined, challenge: info?.challenge })
       completeLogin(r.token, r.user, remember)
       if (r.created) sessionStorage.setItem('cm.flash', `Welcome, ${r.user.name}! Your personal workspace has been created with the sample dataset.`)
       nav(r.redirect, { replace: true })
