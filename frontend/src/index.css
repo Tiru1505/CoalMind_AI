@@ -44,3 +44,15 @@
   #print-area { position: absolute; left: 0; top: 0; width: 100%; box-shadow: none !important; border: none !important; }
   .no-print { display: none !important; }
 }
+
+/* ---------- dark theme refinements (palette itself is swapped via CSS variables) ---------- */
+.dark body { background-color: rgb(var(--c-slate-50)); }
+.dark .btn-primary:hover { background-color: #3f79b4; }
+.dark .shadow-card { box-shadow: 0 1px 2px rgba(0, 0, 0, .35); }
+.dark .recharts-cartesian-grid line { stroke: #243047; }
+.dark .recharts-default-tooltip { background-color: #111a2b !important; border-color: #2c3a52 !important; color: #dde3eb; }
+.dark .recharts-tooltip-cursor { fill: rgba(148, 163, 184, .08); }
+.dark .recharts-legend-item-text { color: #aab6c8 !important; }
+.dark ::-webkit-scrollbar-thumb { background: #344158; }
+.dark .paper { box-shadow: 0 1px 3px rgba(0,0,0,.4), 0 10px 30px -12px rgba(0,0,0,.6); }
+html { transition: background-color .2s ease; }

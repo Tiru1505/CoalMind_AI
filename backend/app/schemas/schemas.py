@@ -7,6 +7,26 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=128)
 
 
+class OTPRequest(BaseModel):
+    mobile: str = Field(min_length=10, max_length=16)
+    role: str = Field(max_length=40)
+
+
+class OTPVerify(BaseModel):
+    mobile: str = Field(min_length=10, max_length=16)
+    role: str = Field(max_length=40)
+    otp: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")
+    name: str | None = Field(default=None, max_length=80)
+    department: str | None = Field(default=None, max_length=120)
+
+
+class ResolveRequest(BaseModel):
+    key: str = Field(max_length=80)
+    value: float
+    reason: str = Field(min_length=5, max_length=300)
+    document_id: int | None = None
+
+
 class ApproveRequest(BaseModel):
     comment: str = Field(default="", max_length=300)
 

@@ -6,17 +6,23 @@ import Logo from './Logo'
 import { api } from '../services/api'
 import { useToast } from '../context/ToastContext'
 import { cx } from '../utils/format'
+import type { AIAnswer } from '../types'
 
 const STEPS = ['Understanding the question', 'Retrieving verified sources', 'Cross-checking figures', 'Composing grounded answer']
-const STORE = 'cm.chat'
-
-export default function AIChat({ suggestions, initialQuestion, disabled, onAnswered }: {
+export default function AIChat({ suggestions, initialQuestion, disabled, onAnswered, replay, storeKey }: {
   suggestions: string[]; initialQuestion?: string | null; disabled?: boolean; onAnswered?: () => void
+  replay?: AIAnswer | null; storeKey: string
 }) {
   const toast = useToast()
+  const STORE = storeKey
   const [messages, setMessages] = useState<ChatMessage[]>(() => {
     try { return JSON.parse(sessionStorage.getItem(STORE) || '[]') } catch { return [] }
   })
+  useEffect(() => {
+    if (!replay) return
+    setMessages((m) => (m.some((x) => x.role === 'assistant' && x.answer.id === replay.id) ? m
+      : [...m, { role: 'user', text: replay.question, at: replay.created_at }, { role: 'assistant', answer: replay }]))
+  }, [replay])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [step, setStep] = useState(0)
@@ -56,7 +62,7 @@ export default function AIChat({ suggestions, initialQuestion, disabled, onAnswe
   const submit = (e: FormEvent) => { e.preventDefault(); ask(input) }
 
   return (
-    <div className="card flex flex-col h-[calc(100vh-200px)] min-h-[560px]">
+    <div className="card flex flex-col h-[calc(100vh-200px)] min-h-[560px] min-w-0">
       <div className="flex-1 overflow-y-auto scrollbar-thin px-4 sm:px-6 py-5 space-y-5">
         {messages.length === 0 && !busy && (
           <div className="max-w-3xl mx-auto pt-6">

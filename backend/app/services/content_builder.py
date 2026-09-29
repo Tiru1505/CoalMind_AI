@@ -35,6 +35,11 @@ def metrics(code: str, fy: str) -> dict:
     }
 
 
+def ov(overrides: dict | None, code: str, fy: str, metric: str, default: float) -> float:
+    """Value as printed in a particular document (lets seeded documents disagree realistically)."""
+    return (overrides or {}).get(f"{code}|{fy}|{metric}", default)
+
+
 def page_text(blocks: list[dict]) -> str:
     lines: list[str] = []
     for b in blocks:
@@ -58,6 +63,7 @@ class Builder:
         self.pages: list[dict] = []
         self.chunks: list[dict] = []
         self.fields: list[dict] = []
+        self.facts: list[dict] = []
         self.tables = 0
 
     def page(self, number: int, title: str, blocks: list[dict], *, chunk: dict | None = None, ocr: float = 97.5):
@@ -77,8 +83,13 @@ class Builder:
             "record_column": column, "order": len(self.fields),
         })
 
+    def fact(self, mine: str, fy: str, metric: str, value: float, unit: str, page: int, snippet: str = "", provisional: bool = False):
+        """Register a figure this document states (used by Consistency Guard)."""
+        self.facts.append({"mine_code": mine, "financial_year": fy, "metric": metric, "value": float(value), "unit": unit,
+                           "page_number": page, "snippet": snippet[:300], "provisional": provisional})
+
     def result(self, fields_total: int | None = None) -> dict:
-        return {"pages": self.pages, "chunks": self.chunks, "fields": self.fields, "tables": self.tables,
+        return {"pages": self.pages, "chunks": self.chunks, "fields": self.fields, "tables": self.tables, "facts": self.facts,
                 "fields_total": fields_total or max(len(self.fields) * 4, len(self.fields))}
 
 
@@ -206,14 +217,26 @@ def production_report(code: str, fy: str, demo: bool = False) -> dict:
     b.field("safety_incidents", "Reportable Safety Incidents", str(m["safety"]), str(m["safety"]), "", 76 if demo else 97, 40,
             warning="Handwritten annotation detected adjacent to value; figure may have been amended." if demo else None,
             column="safety_incidents")
+    for metric, val, unit, pg, snip in [
+        ("coal_production", m["prod"], "MT", 23, f"Coal Production | {m['target']:.1f} Million Tonnes | {tonnes} tonnes | {m['ach']:.2f} %"),
+        ("target", m["target"], "MT", 23, f"Coal Production | {m['target']:.1f} Million Tonnes | {tonnes} tonnes | {m['ach']:.2f} %"),
+        ("dispatch", m["dispatch"], "MT", 24, f"Coal Dispatch | {m['dispatch'] * 0.83:.2f} MT | {m['dispatch'] * 0.17:.2f} MT | {m['dispatch']:.2f} MT"),
+        ("overburden", m["ob"], "Mm³", 27, f"Overburden Removal | {m['ob']} M.Cum | Mm³"),
+        ("land_reclaimed", m["land"], "hectares", 31, f"Land Reclaimed (Technical + Biological): {land_display}"),
+        ("manpower", m["manpower"], "persons", 35, f"Total Manpower on Roll: {m['manpower']:,}"),
+    ]:
+        b.fact(code, fy, metric, val, unit, pg, snip)
     return b.result(fields_total=48)
 
 
-def production_summary(fy: str, codes: list[str], doc_title: str, page_no: int, subsidiary_label: str, topic_page: int = 3) -> dict:
+def production_summary(fy: str, codes: list[str], doc_title: str, page_no: int, subsidiary_label: str, topic_page: int = 3,
+                       overrides: dict | None = None) -> dict:
     b = Builder()
     fs = f"FY {fy}"
-    tot_p = sum(PRODUCTION[c][fy][0] for c in codes)
-    tot_t = sum(PRODUCTION[c][fy][1] for c in codes)
+    val = {c: (ov(overrides, c, fy, "coal_production", PRODUCTION[c][fy][0]), ov(overrides, c, fy, "target", PRODUCTION[c][fy][1]),
+               ov(overrides, c, fy, "overburden", PRODUCTION[c][fy][2])) for c in codes}
+    tot_p = sum(v[0] for v in val.values())
+    tot_t = sum(v[1] for v in val.values())
     b.page(1, "Cover", [
         {"type": "heading", "text": doc_title.upper()},
         {"type": "kv", "items": [["Coverage", subsidiary_label], ["Period", f"April–March, {fs}"], ["Compiled by", "Production MIS Cell"]]},
@@ -225,26 +248,35 @@ def production_summary(fy: str, codes: list[str], doc_title: str, page_no: int, 
     ], chunk={"mines": codes, "fy": fy, "topic": "production-output", "metrics": ["coal_production", "target", "achievement", "aggregate"]})
     rows = []
     for c in codes:
-        p, t, ob, *_ = PRODUCTION[c][fy]
+        p, t, ob = val[c]
         rows.append([MINE_INFO[c]["short"], f"{t:.1f}", f"{p:.1f}", f"{p / t * 100:.1f}", f"{ob}"])
+        row_text = " | ".join(rows[-1])
+        b.fact(c, fy, "coal_production", p, "MT", page_no, row_text)
+        b.fact(c, fy, "target", t, "MT", page_no, row_text)
+        b.fact(c, fy, "overburden", ob, "Mm³", page_no, row_text)
     b.page(page_no, "Mine-wise Production", [
         {"type": "heading", "text": "Mine-wise Coal Production and OB Removal"},
         {"type": "table", "caption": f"Table: Mine-wise production vs target — {fs}",
          "headers": ["Mine", "Target (MT)", "Production (MT)", "Achievement (%)", "OB Removal (Mm³)"], "rows": rows},
     ], chunk={"mines": codes, "fy": fy, "topic": "production-output", "metrics": ["coal_production", "target", "achievement", "overburden"]})
     for i, c in enumerate(codes[:4]):
-        p = PRODUCTION[c][fy][0]
+        p = val[c][0]
         b.field(f"prod_{c.lower()}", f"Production — {MINE_INFO[c]['short']}", f"{p:.1f}", f"{p:.1f}", "MT", 98 - i * 0.5, page_no)
     b.field("aggregate_production", "Aggregate Production", f"{tot_p:.1f} MT", f"{tot_p:.1f}", "MT", 97, topic_page)
     return b.result(fields_total=36)
 
 
-def multi_year_trend(codes: list[str], fys: list[str], title: str, page_no: int) -> dict:
+def multi_year_trend(codes: list[str], fys: list[str], title: str, page_no: int, provisional: bool = False,
+                     overrides: dict | None = None) -> dict:
     b = Builder()
     b.page(1, "Cover", [{"type": "heading", "text": title.upper()}, {"type": "para", "text": "South Eastern Coalfields Limited — Korba Group of Mines"}])
     headers = ["Mine"] + [f"FY {f}" for f in fys]
-    rows = [[MINE_INFO[c]["short"]] + [f"{PRODUCTION[c][f][0]:.1f}" for f in fys] for c in codes]
-    rows.append(["Total"] + [f"{sum(PRODUCTION[c][f][0] for c in codes):.1f}" for f in fys])
+    pv = {(c, f): ov(overrides, c, f, "coal_production", PRODUCTION[c][f][0]) for c in codes for f in fys}
+    rows = [[MINE_INFO[c]["short"]] + [f"{pv[(c, f)]:.1f}" for f in fys] for c in codes]
+    rows.append(["Total"] + [f"{sum(pv[(c, f)] for c in codes):.1f}" for f in fys])
+    for i, c in enumerate(codes):
+        for f in fys:
+            b.fact(c, f, "coal_production", pv[(c, f)], "MT", page_no, " | ".join(rows[i]), provisional=provisional)
     b.page(page_no, "Production Trend", [
         {"type": "heading", "text": "Multi-year Production Trend (MT)"},
         {"type": "table", "caption": "Table: Coal production by mine and financial year (MT)", "headers": headers, "rows": rows},
@@ -255,8 +287,8 @@ def multi_year_trend(codes: list[str], fys: list[str], title: str, page_no: int)
         {"type": "heading", "text": f"Mine-wise Coal Production — FY {fy}"},
         {"type": "table", "caption": f"Table 3.1: Production vs target — FY {fy}",
          "headers": ["Mine", "Target (MT)", "Production (MT)", "Achievement (%)"],
-         "rows": [[MINE_INFO[c]["short"], f"{PRODUCTION[c][fy][1]:.1f}", f"{PRODUCTION[c][fy][0]:.1f}",
-                   f"{PRODUCTION[c][fy][0] / PRODUCTION[c][fy][1] * 100:.1f}"] for c in codes]},
+         "rows": [[MINE_INFO[c]["short"], f"{PRODUCTION[c][fy][1]:.1f}", f"{pv[(c, fy)]:.1f}",
+                   f"{pv[(c, fy)] / PRODUCTION[c][fy][1] * 100:.1f}"] for c in codes]},
     ], chunk={"mines": codes, "fy": fy, "topic": "production-output", "metrics": ["coal_production", "target", "achievement"]})
     b.field("total_production", f"Total Production FY {fy}", rows[-1][-1], rows[-1][-1], "MT", 97, page_no)
     return b.result(fields_total=44)
@@ -294,10 +326,11 @@ def geological_assessment(code: str, bilingual: bool = False) -> dict:
     return b.result(fields_total=41)
 
 
-def land_reclamation_report(fy: str) -> dict:
+def land_reclamation_report(fy: str, overrides: dict | None = None) -> dict:
     b = Builder()
     codes = SECL_KORBA
-    tot = sum(PRODUCTION[c][fy][3] for c in codes)
+    land = {c: ov(overrides, c, fy, "land_reclaimed", PRODUCTION[c][fy][3]) for c in codes}
+    tot = sum(land.values())
     bio = round(tot * 0.64)
     saplings = int(tot * 2500)
     b.page(1, "Cover", [{"type": "heading", "text": "LAND RECLAMATION & ECO-RESTORATION REPORT 2025"},
@@ -306,16 +339,19 @@ def land_reclamation_report(fy: str) -> dict:
         {"type": "heading", "text": "2. Mine-wise Land Reclamation"},
         {"type": "table", "caption": f"Table 2.1: Land reclaimed during FY {fy} (hectares)",
          "headers": ["Mine", "Technical Reclamation (ha)", "Biological Reclamation (ha)", "Total (ha)"],
-         "rows": [[MINE_INFO[c]["short"], f"{PRODUCTION[c][fy][3] - round(PRODUCTION[c][fy][3] * 0.64)}",
-                   f"{round(PRODUCTION[c][fy][3] * 0.64)}", f"{PRODUCTION[c][fy][3]}"] for c in codes] + [["Total", f"{tot - bio}", f"{bio}", f"{tot}"]]},
-        {"type": "para", "text": f"A total of {tot} hectares of mined-out land was reclaimed across the Korba group in FY {fy}, an increase of 9.2% over the previous year."},
+         "rows": [[MINE_INFO[c]["short"], f"{land[c] - round(land[c] * 0.64):g}",
+                   f"{round(land[c] * 0.64)}", f"{land[c]:g}"] for c in codes] + [["Total", f"{tot - bio:g}", f"{bio}", f"{tot:g}"]]},
+        {"type": "para", "text": f"A total of {tot:g} hectares of mined-out land was reclaimed across the Korba group in FY {fy}, an increase of 9.2% over the previous year."},
     ], chunk={"mines": codes, "fy": fy, "topic": "land-reclamation", "metrics": ["land_reclaimed"]}, ocr=88.1)
     b.page(9, "Plantation", [
         {"type": "heading", "text": "3. Plantation & Biological Reclamation"},
         {"type": "kv", "items": [["Saplings Planted", f"{saplings:,}"], ["Survival Rate", "81 %"], ["Species", "Sal, Karanj, Neem, Bamboo, Arjun"]]},
         {"type": "para", "text": "An eco-park has been developed on the reclaimed external dump at Gevra; seed-ball plantation trials were undertaken at Kusmunda."},
     ], chunk={"mines": codes, "fy": fy, "topic": "land-reclamation", "metrics": ["plantation", "land_reclaimed"]}, ocr=79.4)
-    b.field("total_land_reclaimed", "Total Land Reclaimed", f"{tot} ha", f"{tot}", "hectares", 95, 4)
+    for c in codes:
+        b.fact(c, fy, "land_reclaimed", land[c], "hectares", 4,
+               f"{MINE_INFO[c]['short']} | {land[c] - round(land[c] * 0.64):g} | {round(land[c] * 0.64)} | {land[c]:g}")
+    b.field("total_land_reclaimed", "Total Land Reclaimed", f"{tot:g} ha", f"{tot:g}", "hectares", 95, 4)
     b.field("gevra_land", "Land Reclaimed — Gevra OC", f"{PRODUCTION['GEV'][fy][3]}", f"{PRODUCTION['GEV'][fy][3]}", "hectares", 93, 4)
     b.field("bio_reclamation", "Biological Reclamation Area", f"{bio} ha", f"{bio}", "hectares", 86, 4,
             warning="Column total does not match the sum of mine-wise rows by 1 ha (rounding or OCR error).")

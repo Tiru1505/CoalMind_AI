@@ -50,7 +50,8 @@ export default function SettingsPage() {
           {tab === 'profile' && user && (
             <section className="card p-5">
               <h3 className="card-title mb-2">Profile</h3>
-              <Row k="Name" v={user.name} /><Row k="Employee ID" v={<span className="font-mono">{user.employee_id}</span>} />
+              <Row k="Name" v={user.name} /><Row k="Mobile (sign-in)" v={<span className="font-mono">{user.mobile}</span>} hint="Verified by OTP" />
+              <Row k="Employee ID" v={<span className="font-mono">{user.employee_id}</span>} />
               <Row k="Designation" v={user.designation} /><Row k="Department" v={user.department} /><Row k="Email" v={user.email} />
               <Row k="Role" v={<span className="chip bg-brand-50 text-brand-700 ring-1 ring-inset ring-brand-600/20">{ROLE_LABEL[user.role]}</span>} />
               <Row k="Permissions" v={<div className="flex flex-wrap gap-1.5">{user.permissions.length ? user.permissions.map((p) => <span key={p} className="chip bg-slate-100 text-slate-600 font-mono !text-[11px]">{p}</span>) : <span className="text-slate-500">Read-only: search, dashboards, reports</span>}</div>} />
@@ -73,7 +74,8 @@ export default function SettingsPage() {
             <>
               <section className="card p-5">
                 <h3 className="card-title mb-2">Security controls</h3>
-                <Row k="Authentication" v="Employee ID + password (demo) · SSO / LDAP integration planned" />
+                <Row k="Authentication" v="Mobile number + 6-digit OTP (HMAC-hashed, 5-minute expiry, 5 attempts, 30 s resend cooldown) · role selected at sign-in and fixed for the session" />
+                <Row k="Data isolation" v="Every user has a separate workspace — documents, records, reports, AI history and audit history are scoped to the owner" />
                 <Row k="Session handling" v="Signed session token, 8-hour expiry, automatic sign-out on expiry" />
                 <Row k="Role-based access" v="4 roles enforced on the API and in the UI" />
                 <Row k="File validation" v="Extension allow-list, magic-byte signature check, 25 MB limit, filename sanitisation" />
@@ -82,7 +84,7 @@ export default function SettingsPage() {
                 <Row k="Data transmission" v={<span className="text-emerald-700 font-medium">No external data transmission in Demo Mode</span>} />
                 <p className="text-[11.5px] text-slate-400 mt-3">These are prototype-level controls. Production hardening (TLS, HSM-backed keys, VAPT, CERT-In compliance) is part of the deployment plan.</p>
               </section>
-              <section className="card">
+              {data.users.length > 0 && <section className="card">
                 <div className="card-header"><h3 className="card-title flex items-center gap-2"><Users className="w-4 h-4 text-slate-500" /> Users & roles</h3>{can('manage_users') ? <span className="chip bg-emerald-50 text-emerald-700">You can manage users</span> : <span className="chip bg-slate-100 text-slate-500">View only</span>}</div>
                 <table className="table-base">
                   <thead><tr><th>User</th><th>Employee ID</th><th>Role</th><th>Department</th><th>Last sign-in</th></tr></thead>
@@ -101,7 +103,7 @@ export default function SettingsPage() {
                     ))}
                   </div>
                 </div>
-              </section>
+              </section>}
             </>
           )}
 
@@ -123,7 +125,7 @@ export default function SettingsPage() {
                     <span className="font-semibold tabular-nums w-10">{threshold}%</span>
                   </div>} />
               </section>
-              <section className="card p-5 flex items-start gap-3 bg-ink-900 text-slate-200 border-ink-800">
+              <section className="light-scope card p-5 flex items-start gap-3 !bg-ink-900 text-slate-200 border-ink-800">
                 <Server className="w-5 h-5 text-coal-400 shrink-0 mt-0.5" />
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-2 text-[13px] flex-1">
                   <div><span className="text-slate-400">Deployment:</span> {data.deployment}</div>

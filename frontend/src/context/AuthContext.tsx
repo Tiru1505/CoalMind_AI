@@ -6,6 +6,7 @@ interface AuthState {
   user: User | null
   ready: boolean
   login: (id: string, pw: string, remember: boolean) => Promise<void>
+  completeLogin: (token: string, user: User, remember: boolean) => void
   logout: () => Promise<void>
   can: (permission: string) => boolean
   sessionExpired: boolean
@@ -40,6 +41,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(res.user)
   }, [])
 
+  const completeLogin = useCallback((token: string, u: User, remember: boolean) => {
+    tokenStore.set(token, remember)
+    sessionStorage.removeItem('cm.chat')
+    setSessionExpired(false)
+    setUser(u)
+  }, [])
+
   const logout = useCallback(async () => {
     try { await api.logout() } catch { /* ignore */ }
     tokenStore.clear()
@@ -48,7 +56,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const can = useCallback((p: string) => !!user?.permissions.includes(p), [user])
 
-  return <Ctx.Provider value={{ user, ready, login, logout, can, sessionExpired }}>{children}</Ctx.Provider>
+  return <Ctx.Provider value={{ user, ready, login, completeLogin, logout, can, sessionExpired }}>{children}</Ctx.Provider>
 }
 
 export const useAuth = () => useContext(Ctx)

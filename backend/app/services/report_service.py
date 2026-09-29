@@ -7,13 +7,16 @@ an authorised officer approves it.
 """
 from __future__ import annotations
 
+from contextvars import ContextVar
 from datetime import datetime
 
 from sqlalchemy.orm import Session
 
 from app.database.demo_data import FINANCIAL_YEARS, LATEST_VERIFIED_FY
 from app.models.models import Document, ExtractedField, GeologicalRecord, Mine, ProductionRecord, Report
-from app.services import audit_service, vector_search
+from app.services import audit_service, consistency_service, vector_search
+
+_OWNER: ContextVar[int] = ContextVar("report_owner")  # reports are built from the author's own workspace
 
 REPORT_TYPES = [
     "Monthly Production Report", "Annual Mining Report", "Geological Summary", "Land Reclamation Report",
@@ -44,10 +47,10 @@ class _Refs:
         self.index: dict[tuple[int, int], int] = {}
 
     def cite(self, query: str, mines: list[str] | None, fy: str | None, tags: list[str] | None, k: int = 2) -> list[int]:
-        hits = vector_search.search(self.db, query, k=k, mines=mines, fy=fy, metrics=tags, require_filter=bool(mines or fy or tags),
+        hits = vector_search.search(self.db, query, owner_id=_OWNER.get(), k=k, mines=mines, fy=fy, metrics=tags, require_filter=bool(mines or fy or tags),
                                     verified_only=True, one_per_document=True)
         if not hits and fy:
-            hits = vector_search.search(self.db, query, k=k, mines=mines, metrics=tags, require_filter=bool(mines or tags),
+            hits = vector_search.search(self.db, query, owner_id=_OWNER.get(), k=k, mines=mines, metrics=tags, require_filter=bool(mines or tags),
                                         verified_only=True, one_per_document=True)
         out = []
         for h in hits:
@@ -63,7 +66,8 @@ class _Refs:
 
 
 def _rec(db, mine_ids, fy):
-    return db.query(ProductionRecord).filter(ProductionRecord.mine_id.in_(mine_ids), ProductionRecord.financial_year == fy).all()
+    return db.query(ProductionRecord).filter(ProductionRecord.owner_id == _OWNER.get(), ProductionRecord.mine_id.in_(mine_ids),
+                                             ProductionRecord.financial_year == fy).all()
 
 
 def _agg(recs):
@@ -78,6 +82,7 @@ def _agg(recs):
 
 
 def generate(db: Session, payload: dict, user: dict) -> Report:
+    _OWNER.set(user["id"])
     rtype = payload.get("report_type") or "Annual Mining Report"
     if rtype not in REPORT_TYPES:
         raise ReportError("Unknown report type")
@@ -198,7 +203,13 @@ def generate(db: Session, payload: dict, user: dict) -> Report:
         })
 
     pending = (db.query(ExtractedField).join(Document, Document.id == ExtractedField.document_id)
-               .filter(Document.mine_id.in_(ids), Document.financial_year == fy, ExtractedField.status == "pending").all())
+               .filter(Document.owner_id == user["id"], Document.mine_id.in_(ids), Document.financial_year == fy,
+                       ExtractedField.status == "pending").all())
+    # Consistency Guard: do other documents state different values for the figures in this report?
+    codes_in_scope = {m.code for m in mines}
+    scan = consistency_service.scan(db, user["id"])
+    open_conflicts = [c for c in scan["conflicts"] if c["mine_code"] in codes_in_scope and c["financial_year"] == fy]
+    resolved_here = [c for c in scan["resolved"] if c["mine_code"] in codes_in_scope and c["financial_year"] == fy]
 
     if "key_observations" in sections:
         obs = []
@@ -212,6 +223,10 @@ def generate(db: Session, payload: dict, user: dict) -> Report:
             obs.append(f"{cur['safety']} reportable safety incident(s) recorded; no fatal accidents.")
         if pending:
             obs.append(f"{len(pending)} extracted figure(s) for this scope are still awaiting officer validation and have been excluded from this draft.")
+        for c in open_conflicts[:3]:
+            alt = ", ".join(cl["display"] for cl in c["clusters"][1:])
+            obs.append(f"Cross-source discrepancy: {c['label'].lower()} of {c['mine']} is stated as {c['consensus_display']} by "
+                       f"{c['agreeing']} source(s) but {alt} elsewhere — resolve in Consistency Guard before official use.")
         out_sections.append({"id": "key_observations", "title": SECTIONS["key_observations"], "bullets": obs, "cites": []})
 
     key_stats = [
@@ -228,6 +243,10 @@ def generate(db: Session, payload: dict, user: dict) -> Report:
         {"check": "Arithmetic consistency (achievement = production ÷ target)", "status": "pass"},
         {"check": f"Pending validation items in scope: {len(pending)}" + (f" ({', '.join(sorted({p.label for p in pending}))})" if pending else ""),
          "status": "warn" if pending else "pass"},
+        {"check": (f"Cross-source consistency (Consistency Guard): {len(open_conflicts)} open conflict(s)"
+                   + (f" — {', '.join(c['label'] + ' / ' + c['mine'] for c in open_conflicts[:3])}" if open_conflicts else "")
+                   + (f"; {len(resolved_here)} resolved by officer" if resolved_here else "")),
+         "status": "warn" if open_conflicts else "pass"},
     ]
     now = datetime.utcnow()
     count = db.query(Report).count() + 1
@@ -245,12 +264,12 @@ def generate(db: Session, payload: dict, user: dict) -> Report:
         "references": refs.items,
         "validation_checks": checks,
     }
-    rep = Report(report_no=report_no, title=title, report_type=rtype, scope=subject, financial_year=fy,
+    rep = Report(owner_id=user["id"], report_no=report_no, title=title, report_type=rtype, scope=subject, financial_year=fy,
                  date_range=payload.get("date_range") or period, sections=sections, content=content, status="Draft",
                  generated_by=user["name"], created_at=now)
     db.add(rep)
     db.flush()
-    audit_service.log(db, user=user["name"], role=user["role"], action=f"Generated report draft — {rtype}", category="report",
+    audit_service.for_user(db, user, action=f"Generated report draft — {rtype}", category="report",
                       status="Draft", document_label=title, source=f"{len(refs.items)} source references",
                       details={"report_no": report_no, "sections": sections, "scope": subject, "financial_year": fy,
                                "model": "Report composer (template + verified data)", "pending_items": len(pending)})
@@ -261,7 +280,7 @@ def generate(db: Session, payload: dict, user: dict) -> Report:
 def approve(db: Session, rep: Report, user: dict) -> Report:
     rep.status = "Approved"
     rep.approved_by = user["name"]
-    audit_service.log(db, user=user["name"], role=user["role"], action="Approved report for official use", category="report",
+    audit_service.for_user(db, user, action="Approved report for official use", category="report",
                       status="Approved", document_label=rep.title, source=rep.report_no, details={"report_no": rep.report_no})
     db.commit()
     return rep

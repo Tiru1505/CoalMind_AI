@@ -30,7 +30,8 @@ def analytics(subsidiary: str = "", mine: str = "", fy: str = "2024-25", db: Ses
     fy = fy if fy in FINANCIAL_YEARS else "2024-25"
     yearly = []
     for f in FINANCIAL_YEARS:
-        recs = db.query(ProductionRecord).filter(ProductionRecord.mine_id.in_(ids), ProductionRecord.financial_year == f).all()
+        recs = db.query(ProductionRecord).filter(ProductionRecord.owner_id == user["id"], ProductionRecord.mine_id.in_(ids),
+                                                 ProductionRecord.financial_year == f).all()
         if not recs:
             continue
         p = sum(r.coal_production_mt for r in recs); t = sum(r.target_mt for r in recs); ob = sum(r.overburden_mm3 for r in recs)
@@ -41,7 +42,7 @@ def analytics(subsidiary: str = "", mine: str = "", fy: str = "2024-25", db: Ses
                        "dispatch": round(sum(r.dispatch_mt for r in recs), 1), "provisional": f in PROVISIONAL_FYS})
     by_mine = []
     for m in mines:
-        r = db.query(ProductionRecord).filter_by(mine_id=m.id, financial_year=fy).first()
+        r = db.query(ProductionRecord).filter_by(owner_id=user["id"], mine_id=m.id, financial_year=fy).first()
         if r:
             by_mine.append({"mine": m.short_name, "code": m.code, "subsidiary": m.subsidiary, "production": r.coal_production_mt,
                             "target": r.target_mt, "achievement": round(r.coal_production_mt / r.target_mt * 100, 1),
@@ -86,14 +87,14 @@ def export(format: str = Query("csv", pattern="^(csv|xlsx)$"), subsidiary: str =
                "Stripping Ratio (m3/t)", "Dispatch (MT)", "Land Reclaimed (ha)", "Manpower", "OMS (t)", "Safety Incidents", "Record Status"]
     rows = []
     for m in mines:
-        for r in db.query(ProductionRecord).filter_by(mine_id=m.id).order_by(ProductionRecord.financial_year).all():
+        for r in db.query(ProductionRecord).filter_by(owner_id=user["id"], mine_id=m.id).order_by(ProductionRecord.financial_year).all():
             if fy and fy != "all" and r.financial_year != fy:
                 continue
             rows.append([m.short_name, m.subsidiary, f"FY {r.financial_year}", r.coal_production_mt, r.target_mt,
                          round(r.coal_production_mt / r.target_mt * 100, 2), r.overburden_mm3, r.stripping_ratio, r.dispatch_mt,
                          r.land_reclaimed_ha, r.manpower, r.productivity_oms, r.safety_incidents, r.status])
     stamp = datetime.now().strftime("%Y%m%d_%H%M")
-    audit_service.log(db, user=user["name"], role=user["role"], action=f"Exported analytics ({format.upper()})", category="report",
+    audit_service.for_user(db, user, action=f"Exported analytics ({format.upper()})", category="report",
                       status="Exported", document_label=f"{len(rows)} records", source="Analytics", commit=True,
                       details={"filters": {"subsidiary": subsidiary, "mine": mine, "fy": fy}})
     if format == "csv":

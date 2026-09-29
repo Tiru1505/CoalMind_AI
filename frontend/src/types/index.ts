@@ -8,6 +8,8 @@ export interface User {
   designation: string
   department: string
   email: string
+  mobile: string
+  dashboard: string
   permissions: string[]
 }
 
@@ -39,11 +41,18 @@ export interface AuditEntry {
 export interface DashboardData {
   kpis: Kpi[]
   production_trend: { fy: string; production: number; target: number; achievement: number; provisional: boolean }[]
-  mine_wise: { mine: string; code: string; production: number; target: number; achievement: number }[]
+  mine_wise: { mine: string; code: string; production: number; target: number; achievement: number; land: number; overburden: number; safety: number }[]
   mine_wise_fy: string
   document_status: { name: string; value: number }[]
   recent_activity: AuditEntry[]
   demo_document: { id: number; title: string; status: string } | null
+  workspace: { documents: number; processed: number; pending_fields: number; reports: number; queries: number; uploaded: number; failed: number }
+  consistency: {
+    score: number; open_conflicts: number; high_severity: number; resolved_count: number; cross_checked: number; agree_count: number
+    top: { key: string; label: string; mine: string; fy: string; severity: 'high' | 'low' | null; values: string[] }[]
+  }
+  reports: ReportItem[]
+  headline: { fy: string; production: number; target: number; achievement: number; provisional: boolean } | null
 }
 
 export type DocStatus = 'Uploaded' | 'Processing' | 'Processed' | 'Validation Required' | 'Approved' | 'Failed'
@@ -154,6 +163,7 @@ export interface AIAnswer {
   facts?: { label: string; value: string }[]
   table?: { headers: string[]; rows: string[][] }
   chart?: { type: string; unit: string; label: string; data: { fy: string; value: number; target: number | null; provisional: boolean }[] }
+  consistency?: CrossCheck | null
   understanding: { intent: string; mines: string[]; financial_year: string; metric: string | null }
   trust: { label: string; verified_only: boolean; llm: string; embedding_model: string; chunks_searched: number; latency_ms: number }
   created_at: string
@@ -235,4 +245,55 @@ export interface Notification {
   body: string
   link: string
   time: string
+}
+
+export interface CrossCheck {
+  key: string
+  status: 'agree' | 'conflict' | 'resolved'
+  severity: 'high' | 'low' | null
+  label: string
+  source_count: number
+  agreeing: number
+  consensus: string
+  differing: { value: string; sources: string[]; provisional: boolean }[]
+  resolution: { value: number; display: string; reason: string; user: string; timestamp: string } | null
+}
+
+export interface FigureSource {
+  fact_id: number; document_id: number; title: string; filename: string; page: number; snippet: string
+  provisional: boolean; doc_status: string; category: string
+}
+
+export interface FigureCheck {
+  key: string
+  mine: string
+  mine_code: string
+  financial_year: string
+  metric: string
+  label: string
+  unit: string
+  status: 'single' | 'agree' | 'conflict' | 'resolved'
+  severity: 'high' | 'low' | null
+  source_count: number
+  agreeing: number
+  consensus_value: number
+  consensus_display: string
+  recommended: { value: number; display: string; reason: string }
+  clusters: { value: number; display: string; sources: FigureSource[] }[]
+  resolution: { value: number; display: string; reason: string; user: string; timestamp: string } | null
+}
+
+export interface ConsistencyScan {
+  score: number
+  figures_checked: number
+  cross_checked: number
+  statements: number
+  documents: number
+  open_conflicts: number
+  high_severity: number
+  resolved_count: number
+  agree_count: number
+  conflicts: FigureCheck[]
+  resolved: FigureCheck[]
+  agreements: FigureCheck[]
 }

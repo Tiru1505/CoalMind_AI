@@ -15,13 +15,17 @@ from __future__ import annotations
 
 import re
 import time
+from contextvars import ContextVar
 from datetime import datetime
 
 from sqlalchemy.orm import Session
 
 from app.database.demo_data import FINANCIAL_YEARS, LATEST_VERIFIED_FY, PROVISIONAL_FYS
-from app.models.models import AIQuery, AISource, Document, GeologicalRecord, Mine, ProductionRecord
-from app.services import audit_service, vector_search
+from app.models.models import AIQuery, AISource, Document, GeologicalRecord, KnowledgeChunk, Mine, ProductionRecord
+from app.services import audit_service, consistency_service, vector_search
+
+# the workspace (user) the current question is answered from — every lookup is scoped to it
+_OWNER: ContextVar[int] = ContextVar("rag_owner")
 from app.services.embedding_service import get_embedder, tokenize
 from app.services.llm_service import get_llm
 
@@ -113,7 +117,12 @@ def fmt(v: float, unit: str = "") -> str:
 
 
 def record(db: Session, mine: Mine, fy: str) -> ProductionRecord | None:
-    return db.query(ProductionRecord).filter_by(mine_id=mine.id, financial_year=fy).first()
+    return db.query(ProductionRecord).filter_by(owner_id=_OWNER.get(), mine_id=mine.id, financial_year=fy).first()
+
+
+def records_for_fy(db: Session, fy: str) -> list[ProductionRecord]:
+    return (db.query(ProductionRecord).join(Mine)
+            .filter(ProductionRecord.owner_id == _OWNER.get(), ProductionRecord.financial_year == fy).order_by(Mine.id).all())
 
 
 def korba_group(db: Session) -> list[Mine]:
@@ -172,7 +181,7 @@ def retrieve(db: Session, query: str, *, mines: list[Mine] | None = None, fy: st
              metric_tags: list[str] | None = None, k: int = 3, strict: bool = True) -> list[vector_search.Hit]:
     codes = [m.code for m in mines] if mines else None
     monthly = re.search(r"month|april|may|june|july|august|september|october|november|december|january|february|march", query.lower())
-    return vector_search.search(db, query, k=k, mines=codes, fy=fy, metrics=metric_tags, require_filter=strict,
+    return vector_search.search(db, query, owner_id=_OWNER.get(), k=k, mines=codes, fy=fy, metrics=metric_tags, require_filter=strict,
                                 verified_only=True, one_per_document=True, exclude_metrics=None if monthly else ["monthly"])
 
 
@@ -219,7 +228,7 @@ def h_metric_lookup(db, q, mines, fy, metric):
 
 def h_targets_exceeded(db, q, mines, fy, metric):
     fy = fy or LATEST_VERIFIED_FY
-    recs = (db.query(ProductionRecord).join(Mine).filter(ProductionRecord.financial_year == fy).order_by(Mine.id).all())
+    recs = records_for_fy(db, fy)
     hits = retrieve(db, "mine-wise coal production versus target achievement " + q, fy=fy, metric_tags=["achievement", "target"])
     if not recs or not hits:
         return None, hits, {}
@@ -335,7 +344,7 @@ def h_ranking(db, q, mines, fy, metric):
     fy = fy or LATEST_VERIFIED_FY
     metric = metric or "coal_production"
     label, col, unit, tags, _ = METRICS[metric]
-    recs = db.query(ProductionRecord).join(Mine).filter(ProductionRecord.financial_year == fy).all()
+    recs = records_for_fy(db, fy)
     hits = retrieve(db, "mine-wise " + label + " " + q, fy=fy, metric_tags=tags)
     if not recs or not hits:
         return None, hits, {}
@@ -406,7 +415,7 @@ GENERIC = {"coal", "mine", "mines", "mining", "cil", "secl", "cmpdi", "india", "
 
 
 def h_semantic(db, q, mines, fy, metric):
-    hits = vector_search.search(db, q, k=3, mines=[m.code for m in mines] or None, fy=fy, verified_only=True, one_per_document=True)
+    hits = vector_search.search(db, q, owner_id=_OWNER.get(), k=3, mines=[m.code for m in mines] or None, fy=fy, verified_only=True, one_per_document=True)
     specific = set(tokenize(q)) - GENERIC
     if not hits or not specific:
         return None, [], {}
@@ -432,7 +441,26 @@ HANDLERS = {
 
 # ------------------------------------------------------------------ entry point
 
+CHECKABLE = {"coal_production", "target", "overburden", "land_reclaimed", "manpower", "dispatch"}
+
+
+def cross_check(db: Session, mine: Mine, fy: str, metric: str) -> dict | None:
+    """Consistency Guard summary for the figure an answer is built on."""
+    c = consistency_service.check(db, _OWNER.get(), mine.code, fy, metric)
+    if c is None or c["status"] == "single":
+        return None
+    minority = [cl for cl in c["clusters"][1:]]
+    return {
+        "key": f"{mine.code}|{fy}|{metric}", "status": c["status"], "severity": c["severity"], "label": c["label"],
+        "source_count": c["source_count"], "agreeing": c["agreeing"], "consensus": c["consensus_display"],
+        "differing": [{"value": cl["display"], "sources": [f"{s['title']} p.{s['page']}" for s in cl["sources"]],
+                       "provisional": all(s["provisional"] for s in cl["sources"])} for cl in minority],
+        "resolution": c["resolution"],
+    }
+
+
 def answer(db: Session, question: str, user: dict) -> dict:
+    _OWNER.set(user["id"])
     t0 = time.perf_counter()
     q = question.strip()
     mines = parse_mines(db, q)
@@ -446,6 +474,19 @@ def answer(db: Session, question: str, user: dict) -> dict:
         draft, hits, extras = h_semantic(db, q, mines, fy, metric)
         intent = "semantic" if draft else intent
     grounded = draft is not None and bool(hits)
+    consistency = None
+    if grounded and mines and intent in ("metric_lookup", "mine_summary"):
+        m_key = metric if (intent == "metric_lookup" and metric in CHECKABLE) else "coal_production" if intent == "mine_summary" or metric == "target" else None
+        if m_key:
+            consistency = cross_check(db, mines[0], fy or LATEST_VERIFIED_FY, m_key)
+        if consistency and consistency["status"] == "conflict":
+            d = consistency["differing"][0]
+            kind = "provisional source reports" if d["provisional"] else "source reports"
+            draft += (f"\n\nCross-source check: {consistency['agreeing']} of {consistency['source_count']} documents agree on "
+                      f"{consistency['consensus']}; {len(d['sources'])} {kind} {d['value']}. Review it in Consistency Guard before official use.")
+        elif consistency and consistency["status"] == "resolved":
+            draft += (f"\n\nCross-source check: a disagreement between sources was resolved by {consistency['resolution']['user']} "
+                      f"({consistency['resolution']['display']} confirmed as authoritative).")
     hints = [METRICS[metric][0].split(" (")[0]] if metric else None
     sources = build_sources(db, hits, q, mines, fy, hints) if grounded else []
     llm = get_llm()
@@ -457,31 +498,34 @@ def answer(db: Session, question: str, user: dict) -> dict:
         extras = {}
     latency = int((time.perf_counter() - t0) * 1000)
     total_chunks = vector_search_count(db)
-    rec = AIQuery(question=q, answer=text, intent=intent, grounded=grounded, user=user["name"], latency_ms=latency)
+    rec = AIQuery(owner_id=user["id"], question=q, answer=text, intent=intent, grounded=grounded, user=user["name"], latency_ms=latency)
     db.add(rec)
     db.flush()
     for s in sources:
         db.add(AISource(query_id=rec.id, chunk_id=s["chunk_id"], document_id=s["document_id"], page_number=s["page"], relevance=s["relevance"]))
-    audit_service.log(db, user=user["name"], role=user["role"], action="AI query answered" if grounded else "AI query — no verified source found",
+    audit_service.for_user(db, user, action="AI query answered" if grounded else "AI query — no verified source found",
                       category="ai", status="Answered" if grounded else "No Source", document_label=sources[0]["document_title"] if sources else "—",
                       source=f"{len(sources)} source(s) retrieved",
                       details={"question": q, "intent": intent, "sources": [f"{s['filename']} p.{s['page']}" for s in sources],
-                               "model": llm.name, "embedding": get_embedder().name, "latency_ms": latency})
-    db.commit()
+                               "model": llm.name, "embedding": get_embedder().name, "latency_ms": latency,
+                               "consistency": consistency["status"] if consistency else None})
     understanding = {"intent": intent.replace("_", " "), "mines": [m.short_name for m in mines],
                      "financial_year": f"FY {fy}" if fy else f"FY {LATEST_VERIFIED_FY} (default: latest verified)" if intent != "trend" else "FY 2021-22 → 2025-26",
                      "metric": METRICS[metric][0] if metric else None}
-    return {
+    payload = {
         "id": rec.id, "question": q, "answer": text, "intent": intent, "grounded": grounded,
         "sources": sources, "sources_count": len(sources), **extras,
+        "consistency": consistency,
         "understanding": understanding,
         "trust": {"label": "Grounded in verified organizational data" if grounded else "No verified source found",
                   "verified_only": True, "llm": llm.name, "embedding_model": get_embedder().name,
                   "chunks_searched": total_chunks, "latency_ms": latency},
         "created_at": datetime.utcnow().isoformat() + "Z",
     }
+    rec.payload = payload  # stored so the user's query history can be replayed exactly
+    db.commit()
+    return payload
 
 
 def vector_search_count(db: Session) -> int:
-    from app.models.models import KnowledgeChunk
-    return db.query(KnowledgeChunk).filter(KnowledgeChunk.verified.is_(True)).count()
+    return db.query(KnowledgeChunk).filter(KnowledgeChunk.owner_id == _OWNER.get(), KnowledgeChunk.verified.is_(True)).count()

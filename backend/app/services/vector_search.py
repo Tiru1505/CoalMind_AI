@@ -26,14 +26,14 @@ class Hit:
     score: float
 
 
-def search(db: Session, query: str, *, k: int = 8, mines: list[str] | None = None, fy: str | None = None,
+def search(db: Session, query: str, *, owner_id: int, k: int = 8, mines: list[str] | None = None, fy: str | None = None,
            metrics: list[str] | None = None, topic: str | None = None, require_filter: bool = False,
            verified_only: bool = False, one_per_document: bool = False,
            exclude_metrics: list[str] | None = None) -> list[Hit]:
     q_vec = get_embedder().embed(query)
     q_tokens = set(tokenize(query))
     q = (db.query(KnowledgeChunk).join(Document, Document.id == KnowledgeChunk.document_id)
-         .filter(Document.status.in_(SEARCHABLE_STATUSES)))
+         .filter(KnowledgeChunk.owner_id == owner_id, Document.status.in_(SEARCHABLE_STATUSES)))
     if verified_only:
         q = q.filter(KnowledgeChunk.verified.is_(True))
     rows = q.all()

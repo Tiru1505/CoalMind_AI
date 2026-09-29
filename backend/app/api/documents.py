@@ -17,16 +17,16 @@ router = APIRouter(prefix="/api/documents", tags=["documents"])
 UPLOAD_DIR = BASE_DIR / "storage" / "uploads"
 
 
-def _get(db: Session, doc_id: int) -> Document:
+def _get(db: Session, doc_id: int, user: dict) -> Document:
     doc = db.get(Document, doc_id)
-    if doc is None:
+    if doc is None or doc.owner_id != user["id"]:  # each user only sees their own workspace
         raise HTTPException(404, "Document not found")
     return doc
 
 
 @router.get("")
 def list_documents(q: str = "", status: str = "", file_type: str = "", db: Session = Depends(get_db), user: dict = Depends(current_user)):
-    query = db.query(Document)
+    query = db.query(Document).filter(Document.owner_id == user["id"])
     if status:
         query = query.filter(Document.status == status)
     if file_type:
@@ -46,7 +46,7 @@ async def upload(file: UploadFile = File(...), db: Session = Depends(get_db), us
         ext = validate_file(name, data)
         info = parse_structure(ext, data)
     except FileValidationError as e:
-        audit_service.log(db, user=user["name"], role=user["role"], action="Upload rejected by file validation", category="upload",
+        audit_service.for_user(db, user, action="Upload rejected by file validation", category="upload",
                           status="Rejected", document_label=name[:200], source="File validation", details={"reason": str(e)}, commit=True)
         raise HTTPException(status_code=422, detail=str(e))
     safe = re.sub(r"[^A-Za-z0-9._-]", "_", name)[:180]
@@ -56,13 +56,13 @@ async def upload(file: UploadFile = File(...), db: Session = Depends(get_db), us
     profile = document_processor.infer_profile(db, safe)
     mine = profile.get("mine")
     title = re.sub(r"[_]+", " ", safe.rsplit(".", 1)[0]).strip()
-    doc = Document(filename=safe, title=title, file_type=ext, doc_category=profile["category"], mine_id=mine.id if mine else None,
+    doc = Document(owner_id=user["id"], filename=safe, title=title, file_type=ext, doc_category=profile["category"], mine_id=mine.id if mine else None,
                    mine_label=mine.short_name if mine else "Unassigned", financial_year=profile["fy"], source_kind=info.source_kind,
                    pages=info.pages, size_kb=max(1, len(data) // 1024), uploaded_by=user["name"], status="Uploaded",
                    topics=profile.get("topics", []), storage_path=str(path.relative_to(BASE_DIR)))
     db.add(doc)
     db.flush()
-    audit_service.log(db, user=user["name"], role=user["role"], action="Uploaded document", category="upload", status="Uploaded",
+    audit_service.for_user(db, user, action="Uploaded document", category="upload", status="Uploaded",
                       document=doc, source=f"{ext.upper()} · {info.detail}",
                       details={"size_bytes": len(data), "signature_check": "passed", "parsed": info.detail})
     db.commit()
@@ -71,7 +71,7 @@ async def upload(file: UploadFile = File(...), db: Session = Depends(get_db), us
 
 @router.get("/{doc_id}")
 def get_document(doc_id: int, db: Session = Depends(get_db), user: dict = Depends(current_user)):
-    doc = _get(db, doc_id)
+    doc = _get(db, doc_id, user)
     fields = doc_fields(db, doc)
     return {**S.document(doc), "processing_log": doc.processing_log or [],
             "field_summary": {"total": len(fields), "pending": sum(f.status == "pending" for f in fields),
@@ -83,13 +83,13 @@ def get_document(doc_id: int, db: Session = Depends(get_db), user: dict = Depend
 
 @router.post("/{doc_id}/process")
 def process_document(doc_id: int, db: Session = Depends(get_db), user: dict = Depends(require("process"))):
-    doc = _get(db, doc_id)
+    doc = _get(db, doc_id, user)
     return document_processor.process(db, doc, user)
 
 
 @router.get("/{doc_id}/extraction")
 def extraction(doc_id: int, db: Session = Depends(get_db), user: dict = Depends(current_user)):
-    doc = _get(db, doc_id)
+    doc = _get(db, doc_id, user)
     fields = doc_fields(db, doc)
     pages = db.query(DocumentPage).filter_by(document_id=doc.id).order_by(DocumentPage.page_number).all()
     normalization = [
@@ -127,7 +127,7 @@ def _rule(f: ExtractedField) -> str:
 
 @router.get("/{doc_id}/pages/{page_number}")
 def get_page(doc_id: int, page_number: int, db: Session = Depends(get_db), user: dict = Depends(current_user)):
-    doc = _get(db, doc_id)
+    doc = _get(db, doc_id, user)
     p = db.query(DocumentPage).filter_by(document_id=doc.id, page_number=page_number).first()
     if p is None:
         raise HTTPException(404, "Page not indexed")

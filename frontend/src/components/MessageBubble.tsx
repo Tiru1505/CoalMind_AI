@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { AlertTriangle, Check, ChevronDown, Copy, Cpu, ShieldCheck, ThumbsDown, ThumbsUp, UserRound } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { AlertTriangle, ArrowRight, Check, ChevronDown, Copy, Cpu, GitCompareArrows, ShieldCheck, ThumbsDown, ThumbsUp, UserRound } from 'lucide-react'
 import SourceCitation from './SourceCitation'
 import Logo from './Logo'
 import { api } from '../services/api'
-import type { AIAnswer, Source } from '../types'
+import type { AIAnswer, CrossCheck, Source } from '../types'
 import { cx, fmtTime } from '../utils/format'
 import { tooltipStyle } from '../utils/chart'
 
@@ -40,7 +41,8 @@ function AssistantBubble({ a, onViewSource }: { a: AIAnswer; onViewSource: (s: S
         </div>
 
         <div className="px-4 py-3.5">
-          <p className="text-[14px] leading-relaxed text-slate-800 whitespace-pre-line">{a.answer}</p>
+          <p className="text-[14px] leading-relaxed text-slate-800 whitespace-pre-line">{a.consistency ? a.answer.split('\n\nCross-source check:')[0] : a.answer}</p>
+          {a.consistency && <CrossCheckBadge c={a.consistency} />}
           {!a.grounded && (
             <p className="text-[12.5px] text-slate-500 mt-2">CoalMind AI answers only from validated documents to avoid unsupported figures. Try naming a mine and financial year, or upload and validate the relevant report.</p>
           )}
@@ -121,6 +123,32 @@ function AssistantBubble({ a, onViewSource }: { a: AIAnswer; onViewSource: (s: S
             </ol>
           )}
         </div>
+      </div>
+    </div>
+  )
+}
+
+function CrossCheckBadge({ c }: { c: CrossCheck }) {
+  const conflict = c.status === 'conflict'
+  return (
+    <div className={cx('mt-3 rounded-md border px-3 py-2.5 text-[12.5px] flex gap-2.5',
+      conflict ? (c.severity === 'high' ? 'border-red-200 bg-red-50/70 text-red-900' : 'border-amber-200 bg-amber-50/70 text-amber-900') : 'border-emerald-200 bg-emerald-50/70 text-emerald-900')}>
+      <GitCompareArrows className="w-4 h-4 mt-0.5 shrink-0" />
+      <div className="flex-1">
+        <div className="font-semibold">Consistency Guard · cross-source check</div>
+        {c.status === 'agree' && <div>All {c.source_count} documents that report this figure agree on <b>{c.consensus}</b>.</div>}
+        {c.status === 'resolved' && c.resolution && (
+          <div>Sources disagreed; <b>{c.resolution.display}</b> was confirmed as authoritative by {c.resolution.user} — “{c.resolution.reason}”.</div>
+        )}
+        {conflict && (
+          <>
+            <div><b>{c.agreeing} of {c.source_count}</b> documents agree on <b>{c.consensus}</b>.</div>
+            {c.differing.map((d) => (
+              <div key={d.value} className="opacity-90">{d.provisional ? 'Provisional' : 'Differing'} value <b>{d.value}</b> in {d.sources.join(', ')}.</div>
+            ))}
+            <Link to="/consistency" className="inline-flex items-center gap-1 mt-1 font-medium underline underline-offset-2">Resolve in Consistency Guard before official use <ArrowRight className="w-3 h-3" /></Link>
+          </>
+        )}
       </div>
     </div>
   )

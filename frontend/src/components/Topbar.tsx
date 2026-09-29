@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { AlertTriangle, Bell, CheckCircle2, ChevronDown, Info, LogOut, Menu, RotateCcw, Settings, UserCog, XCircle } from 'lucide-react'
+import { AlertTriangle, Bell, CheckCircle2, ChevronDown, History, Info, LayoutDashboard, LogOut, Menu, RotateCcw, Settings, XCircle } from 'lucide-react'
 import SearchBar from './SearchBar'
 import Modal from './Modal'
+import ThemeToggle from './ThemeToggle'
 import { api } from '../services/api'
 import { useAuth } from '../context/AuthContext'
 import { useToast } from '../context/ToastContext'
@@ -20,50 +21,40 @@ function useOutside(ref: React.RefObject<HTMLElement>, cb: () => void) {
   }, [ref, cb])
 }
 
-export default function Topbar({ notifications, onMenu, refreshKey }: { notifications: Notification[]; onMenu: () => void; refreshKey: number }) {
-  const { user, logout, login, can } = useAuth()
+export default function Topbar({ notifications, onMenu }: { notifications: Notification[]; onMenu: () => void }) {
+  const { user, logout, can } = useAuth()
   const toast = useToast()
   const nav = useNavigate()
   const [nOpen, setNOpen] = useState(false)
   const [uOpen, setUOpen] = useState(false)
   const [resetOpen, setResetOpen] = useState(false)
+  const [resetAll, setResetAll] = useState(false)
   const [resetting, setResetting] = useState(false)
-  const [seen, setSeen] = useState<string[]>(() => JSON.parse(sessionStorage.getItem('cm.seen') || '[]'))
-  const [accounts, setAccounts] = useState<{ employee_id: string; password: string; name: string; role: string; designation: string }[]>([])
+  const seenKey = `cm.seen.${user?.id}`
+  const [seen, setSeen] = useState<string[]>(() => JSON.parse(sessionStorage.getItem(seenKey) || '[]'))
   const nRef = useRef<HTMLDivElement>(null)
   const uRef = useRef<HTMLDivElement>(null)
   useOutside(nRef, () => setNOpen(false))
   useOutside(uRef, () => setUOpen(false))
-  useEffect(() => { api.demoAccounts().then(setAccounts).catch(() => {}) }, [refreshKey])
 
   const unread = notifications.filter((n) => !seen.includes(n.id)).length
   const markAll = () => {
     const ids = notifications.map((n) => n.id)
     setSeen(ids)
-    sessionStorage.setItem('cm.seen', JSON.stringify(ids))
+    sessionStorage.setItem(seenKey, JSON.stringify(ids))
   }
 
   const reset = async () => {
     setResetting(true)
     try {
-      await api.resetDemo()
-      sessionStorage.setItem('cm.flash', 'Demo scenario loaded — Gevra OC FY 2024-25 report is ready to process.')
-      sessionStorage.removeItem('cm.seen')
-      sessionStorage.removeItem('cm.chat')
-      window.location.assign('/dashboard')
+      await api.resetDemo(resetAll ? 'all' : 'mine')
+      sessionStorage.setItem('cm.flash', resetAll ? 'All workspaces were rebuilt from the demo dataset.' : 'Your workspace was reset — the Gevra OC FY 2024-25 report is ready to process.')
+      sessionStorage.removeItem(seenKey)
+      sessionStorage.removeItem(`cm.chat.${user?.id}`)
+      if (resetAll) { await logout(); window.location.assign('/login') } else window.location.assign(user!.dashboard)
     } catch (e) {
       toast('error', 'Could not load demo scenario', (e as Error).message)
       setResetting(false)
-    }
-  }
-
-  const switchTo = async (acc: (typeof accounts)[number]) => {
-    setUOpen(false)
-    try {
-      await login(acc.employee_id, acc.password, localStorage.getItem('coalmind.remember') === '1')
-      toast('info', `Switched to ${acc.name}`, `${ROLE_LABEL[acc.role]} permissions are now active.`)
-    } catch (e) {
-      toast('error', 'Role switch failed', (e as Error).message)
     }
   }
 
@@ -80,10 +71,11 @@ export default function Topbar({ notifications, onMenu, refreshKey }: { notifica
         <span className="w-1.5 h-1.5 rounded-full bg-coal-500" /> Demo Mode
       </span>
       {can('reset_demo') && (
-        <button className="btn-secondary hidden md:inline-flex" onClick={() => setResetOpen(true)}>
+        <button className="btn-secondary hidden md:inline-flex" onClick={() => { setResetAll(false); setResetOpen(true) }}>
           <RotateCcw className="w-3.5 h-3.5" /> Load Demo Scenario
         </button>
       )}
+      <ThemeToggle />
 
       <div ref={nRef} className="relative">
         <button className="btn-ghost !px-2 relative" aria-label="Notifications" onClick={() => setNOpen((o) => !o)}>
@@ -103,7 +95,7 @@ export default function Topbar({ notifications, onMenu, refreshKey }: { notifica
                 return (
                   <li key={n.id}>
                     <button onClick={() => { setNOpen(false); setSeen((s) => [...s, n.id]); nav(n.link) }}
-                      className={cx('w-full flex gap-3 px-4 py-3 text-left hover:bg-slate-50 border-b border-slate-50', !seen.includes(n.id) && 'bg-brand-50/30')}>
+                      className={cx('w-full flex gap-3 px-4 py-3 text-left hover:bg-slate-50 border-b border-slate-100', !seen.includes(n.id) && 'bg-brand-50/30')}>
                       <span className={cx('w-8 h-8 rounded-full grid place-items-center shrink-0', N_TONE[n.type])}><Icon className="w-4 h-4" /></span>
                       <span className="min-w-0">
                         <span className="block text-[13px] font-medium text-slate-800">{n.title}</span>
@@ -124,47 +116,62 @@ export default function Topbar({ notifications, onMenu, refreshKey }: { notifica
           <span className="w-8 h-8 rounded-full bg-brand-600 text-white text-[12px] font-semibold grid place-items-center">{initials}</span>
           <span className="hidden md:block text-left leading-tight whitespace-nowrap">
             <span className="block text-[13px] font-semibold text-slate-800">{user.name}</span>
-            <span className="block text-[11.5px] text-slate-500">{user.designation}</span>
+            <span className="block text-[11.5px] text-slate-500">{ROLE_LABEL[user.role]}</span>
           </span>
           <ChevronDown className="w-4 h-4 text-slate-400" />
         </button>
         {uOpen && (
-          <div className="absolute right-0 top-12 w-[300px] bg-white border border-slate-200 rounded-lg shadow-pop z-50 animate-fade-in overflow-hidden">
+          <div className="absolute right-0 top-12 w-[280px] bg-white border border-slate-200 rounded-lg shadow-pop z-50 animate-fade-in overflow-hidden">
             <div className="px-4 py-3 border-b border-slate-100">
               <div className="text-[13px] font-semibold">{user.name}</div>
-              <div className="text-[12px] text-slate-500">{user.employee_id} · {user.department}</div>
+              <div className="text-[12px] text-slate-500">{user.mobile} · {user.employee_id}</div>
+              <div className="text-[12px] text-slate-500">{user.department}</div>
               <span className="mt-2 chip bg-brand-50 text-brand-700 ring-1 ring-inset ring-brand-600/20">Role: {ROLE_LABEL[user.role]}</span>
+              <p className="text-[11px] text-slate-400 mt-2">Your role is fixed for this session. Sign out to sign in with another role.</p>
             </div>
             <div className="py-1.5">
-              <div className="px-4 pt-1 pb-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-slate-400 flex items-center gap-1.5"><UserCog className="w-3.5 h-3.5" /> Switch role (demo)</div>
-              {accounts.map((a) => (
-                <button key={a.employee_id} onClick={() => switchTo(a)} disabled={a.employee_id === user.employee_id}
-                  className="w-full flex items-center justify-between px-4 py-1.5 text-[12.5px] hover:bg-slate-50 disabled:opacity-100 disabled:bg-brand-50/50">
-                  <span className="text-slate-700">{ROLE_LABEL[a.role]} <span className="text-slate-400">· {a.name}</span></span>
-                  {a.employee_id === user.employee_id && <CheckCircle2 className="w-3.5 h-3.5 text-brand-600" />}
+              {[
+                { i: LayoutDashboard, l: 'My dashboard', to: user.dashboard },
+                { i: History, l: 'My activity history', to: '/audit' },
+                { i: Settings, l: 'Settings', to: '/settings' },
+              ].map(({ i: I, l, to }) => (
+                <button key={l} onClick={() => { setUOpen(false); nav(to) }} className="w-full flex items-center gap-2 px-4 py-2 text-[13px] hover:bg-slate-50">
+                  <I className="w-4 h-4 text-slate-500" /> {l}
                 </button>
               ))}
+              {can('manage_users') && (
+                <button onClick={() => { setUOpen(false); setResetAll(true); setResetOpen(true) }} className="w-full flex items-center gap-2 px-4 py-2 text-[13px] hover:bg-slate-50">
+                  <RotateCcw className="w-4 h-4 text-slate-500" /> Rebuild all workspaces
+                </button>
+              )}
             </div>
             <div className="border-t border-slate-100 py-1.5">
-              <button onClick={() => { setUOpen(false); nav('/settings') }} className="w-full flex items-center gap-2 px-4 py-2 text-[13px] hover:bg-slate-50"><Settings className="w-4 h-4 text-slate-500" /> Settings</button>
               <button onClick={async () => { await logout(); nav('/login') }} className="w-full flex items-center gap-2 px-4 py-2 text-[13px] text-red-700 hover:bg-red-50"><LogOut className="w-4 h-4" /> Sign out</button>
             </div>
           </div>
         )}
       </div>
 
-      <Modal open={resetOpen} onClose={() => setResetOpen(false)} size="sm" title="Load demo scenario?"
+      <Modal open={resetOpen} onClose={() => setResetOpen(false)} size="sm" title={resetAll ? 'Rebuild every workspace?' : 'Load demo scenario?'}
         footer={<>
           <button className="btn-secondary" onClick={() => setResetOpen(false)}>Cancel</button>
-          <button className="btn-primary" disabled={resetting} onClick={reset}><RotateCcw className={cx('w-3.5 h-3.5', resetting && 'animate-spin')} /> {resetting ? 'Loading…' : 'Load scenario'}</button>
+          <button className={resetAll ? 'btn-danger' : 'btn-primary'} disabled={resetting} onClick={reset}>
+            <RotateCcw className={cx('w-3.5 h-3.5', resetting && 'animate-spin')} /> {resetting ? 'Loading…' : resetAll ? 'Rebuild all' : 'Reset my workspace'}
+          </button>
         </>}>
         <div className="px-5 py-4 text-[13px] text-slate-600 space-y-2">
-          <p>This resets the prototype database to the seeded SIH demonstration state:</p>
-          <ul className="list-disc pl-5 space-y-1">
-            <li>17 sample documents, verified production & geological records</li>
-            <li><b>Gevra OCP Production Report FY 2024-25</b> uploaded and ready to process</li>
-            <li>Validation queue, reports and audit trail restored to the starting point</li>
-          </ul>
+          {resetAll ? (
+            <p>This drops the demo database and rebuilds the four demo accounts. <b>All users (including newly registered ones) are removed</b> and everyone is signed out.</p>
+          ) : (
+            <>
+              <p>This resets <b>only your own workspace</b> to the SIH demonstration state. Other users' data is not affected.</p>
+              <ul className="list-disc pl-5 space-y-1">
+                <li>17 sample documents, verified production & geological records</li>
+                <li><b>Gevra OCP Production Report FY 2024-25</b> uploaded and ready to process</li>
+                <li>Validation queue, Consistency Guard conflicts, reports and history restored</li>
+              </ul>
+            </>
+          )}
           <p className="text-[12px] text-slate-500">All values are sample data, not official CIL figures.</p>
         </div>
       </Modal>

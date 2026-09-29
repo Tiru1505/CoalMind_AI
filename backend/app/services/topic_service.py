@@ -21,9 +21,9 @@ from app.services.embedding_service import tokenize
 MODEL_INFO = "BERTopic-style taxonomy (simulated) · c-TF-IDF keyword weighting"
 
 
-def topic_to_dict(db: Session, t: Topic, detail: bool = False) -> dict:
-    live_docs = [d for d in db.query(Document).all() if t.slug in (d.topics or [])]
-    base = (db.get(SystemMeta, "baseline") or SystemMeta(value={})).value
+def topic_to_dict(db: Session, t: Topic, owner_id: int, detail: bool = False) -> dict:
+    live_docs = [d for d in db.query(Document).filter_by(owner_id=owner_id).all() if t.slug in (d.topics or [])]
+    base = (db.get(SystemMeta, f"baseline:{owner_id}") or SystemMeta(value={})).value
     # seeded counts already include the demo library; add documents uploaded & processed since the seed
     new_docs = [d for d in live_docs if d.id > base.get("max_doc_id", 10**9) and d.status in ("Processed", "Approved", "Validation Required")]
     out = {
@@ -33,7 +33,7 @@ def topic_to_dict(db: Session, t: Topic, detail: bool = False) -> dict:
     }
     if detail:
         mines = db.query(Mine).filter(Mine.code.in_(t.related_mines)).all()
-        chunks = db.query(KnowledgeChunk).filter_by(topic=t.slug).count()
+        chunks = db.query(KnowledgeChunk).filter_by(topic=t.slug, owner_id=owner_id).count()
         out.update({
             "related_mines": [{"code": m.code, "name": m.short_name, "subsidiary": m.subsidiary} for m in mines],
             "recent_documents": [
@@ -41,16 +41,17 @@ def topic_to_dict(db: Session, t: Topic, detail: bool = False) -> dict:
                  "uploaded_at": d.uploaded_at.isoformat() + "Z", "mine": d.mine_label}
                 for d in sorted(live_docs, key=lambda d: d.uploaded_at, reverse=True)[:6]
             ],
-            "statistics": topic_statistics(db, t.slug),
+            "statistics": topic_statistics(db, t.slug, owner_id),
             "indexed_chunks": chunks,
             "model": MODEL_INFO,
         })
     return out
 
 
-def topic_statistics(db: Session, slug: str) -> list[dict]:
+def topic_statistics(db: Session, slug: str, owner_id: int) -> list[dict]:
     fy = "2024-25"
-    recs = db.query(ProductionRecord).join(Mine).filter(ProductionRecord.financial_year == fy, Mine.subsidiary == "SECL").all()
+    recs = (db.query(ProductionRecord).join(Mine)
+            .filter(ProductionRecord.owner_id == owner_id, ProductionRecord.financial_year == fy, Mine.subsidiary == "SECL").all())
     if not recs:
         return []
     if slug == "production-output":
@@ -78,9 +79,9 @@ def topic_statistics(db: Session, slug: str) -> list[dict]:
     return []
 
 
-def keyword_cloud(db: Session, topic_slug: str | None = None) -> list[dict]:
-    """Seed weights blended with live term frequency from indexed chunks."""
-    q = db.query(KnowledgeChunk)
+def keyword_cloud(db: Session, owner_id: int, topic_slug: str | None = None) -> list[dict]:
+    """Seed weights blended with live term frequency from the user's indexed chunks."""
+    q = db.query(KnowledgeChunk).filter_by(owner_id=owner_id)
     if topic_slug:
         q = q.filter_by(topic=topic_slug)
     counts = Counter(tok for ch in q.all() for tok in tokenize(ch.content))

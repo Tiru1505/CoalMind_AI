@@ -14,6 +14,31 @@ Documents → OCR/Extraction → Validation (human-in-the-loop) → Structured D
 
 ---
 
+## ⭐ Star feature — Consistency Guard (cross-source figure reconciliation)
+
+Generic document-AI tools answer from whichever chunk they retrieve. But in CIL/CMPDI reporting **the same official figure is printed in many documents** — the mine's annual report, the subsidiary summary, the CIL MIS, provisional monthly returns — and they do not always agree. A wrong number in a Parliament reply or Ministry brief is costly.
+
+CoalMind AI registers **every figure every document states** (mine × financial year × metric), clusters the values, and:
+
+- **Detects conflicts** and ranks them — *high* when final documents disagree, *low* when only a provisional return differs.
+- **Recommends the authoritative value** with an explanation (primary mine report, human-validated, majority of final sources, provisional returns superseded).
+- **Officer resolves** the conflict with a recorded reason → the value is written to the verified record and logged in the audit trail.
+- **AI answers** carry a cross-source badge: *"3 of 4 documents agree on 52.4 MT; 1 provisional source reports 52.1 MT"*.
+- **Reports** include a Consistency Guard validation check and list unresolved discrepancies as key observations.
+- A **consistency score** (share of cross-checked figures that agree or are resolved) appears on the dashboards.
+
+Seeded demo conflicts: Gevra coal production FY 2024-25 (52.4 vs provisional 52.1 MT), Kusmunda overburden (164.7 vs 167.4 Mm³ — digit transposition in the CIL MIS) and Dipka land reclaimed (89 vs 86 ha).
+
+## Authentication, roles & per-user workspaces
+
+- **Mobile-number sign-in with OTP.** The user selects their **role on the login page**, enters a 10-digit mobile number and verifies a 6-digit OTP (HMAC-hashed, 5-minute expiry, 5 attempts, 30-second resend cooldown, rate-limited). In Demo Mode no SMS gateway is connected, so the OTP is shown on screen (`DEMO_SHOW_OTP=1`).
+- Existing numbers must select their registered role; **new numbers create an account** with the selected role (name + optional department).
+- After sign-in each role is **redirected to its own dashboard** — `/dashboard/officer`, `/dashboard/management`, `/dashboard/admin`, `/dashboard/viewer` — and can only open its own dashboard and the areas its role allows. The role is fixed for the session (sign out to change).
+- **Every user has their own dataset and history**: documents, extracted fields, knowledge chunks, production records, Consistency Guard decisions, reports, AI query history and audit history are all owned by the user (`owner_id`). New users get a fresh copy of the sample dataset. *Load Demo Scenario* resets only your own workspace; administrators can rebuild all workspaces and view the organisation-wide audit trail.
+- **Dark mode** — toggle in the top bar or on the login page (defaults to the OS preference); scanned-document previews and report previews stay on white paper.
+
+---
+
 ## 1. Project overview
 
 | Intelligence layer | What it does in the prototype |
@@ -32,8 +57,8 @@ Cross-cutting differentiators, visible throughout the UI:
 
 ## 2. Features
 
-- Mock login with 4 roles and **live role switching** (Admin, Geological Officer, Management, Viewer) — enforced on the API *and* in the UI.
-- Dashboard: 6 KPIs, production trend (production / target / achievement), mine-wise production, document-processing donut, recent activity, "document awaiting processing" call-out.
+- Mobile + OTP sign-in with role selection; 4 roles (Admin, Geological Officer, Management, Viewer) enforced on the API *and* in the UI; role-specific dashboards (officer workspace, executive overview, admin console, read-only viewer).
+- Officer dashboard: 6 KPIs, production trend (production / target / achievement), mine-wise production, document-processing donut, recent activity, "document awaiting processing" call-out.
 - Document Intelligence: drag-and-drop upload (PDF, DOCX, XLSX, JPG, PNG) with **real file validation** (extension allow-list, magic-byte signature check, 25 MB limit, filename sanitisation), document library with filters.
 - Animated 7-stage processing pipeline (Upload → Pre-processing → OCR → Tables → Entities → Validation → Indexing), failure path (low-DPI scan) and re-processing.
 - Extraction & Validation: paper-style document preview with highlighted extracted values (colour = review state), per-field confidence, warnings, OCR original vs AI value, **Approve / Edit / Reject**, data-normalisation panel (`52,400,000 tonnes → 52.4 MT`, `FY 24-25 → FY 2024-25`, `M.Cum → Mm³`).
@@ -44,6 +69,9 @@ Cross-cutting differentiators, visible throughout the UI:
 - Report Studio: 7 report types, scope/FY/month/sections, generation steps animation, professional preview, citations → source viewer, validation checks, **Approve for official use**, Print / Save as PDF, HTML download.
 - Analytics: filters (subsidiary, mine, FY, report type), production, target vs achievement, overburden + stripping ratio, land reclamation, manpower + OMS, safety, forecast, mine comparison; **Export CSV / Excel (.xlsx) / PDF**.
 - Audit & Traceability: filterable log, detail modal with value lineage, write-back record and document history, CSV export.
+- **Consistency Guard**: score ring, conflict cards with side-by-side values and sources, AI recommendation, resolve-with-reason, resolved list and agreements table.
+- Admin console: users & isolated workspaces, OTP sign-in stats, platform service health, activity chart, organisation-wide audit.
+- Dark mode across the whole application.
 - Settings: profile, organisation, security controls, users & role permissions, AI configuration (target stack vs demo runtime), data sources, preferences, on-premise system information.
 - Global search (Ctrl/⌘ + K) with suggestions, notification centre, **Load Demo Scenario** reset, loading / empty / error states everywhere, responsive down to phone width.
 
@@ -173,16 +201,18 @@ See `.env.example`. All are optional for the demo.
 | `EMBEDDING_BACKEND` | `hashing` | `sbert` to use Sentence-BERT |
 | `VITE_API_TARGET` | `http://127.0.0.1:8000` | Dev-server proxy target |
 
-## 8. Demo credentials
+## 8. Demo accounts
 
-| Role | Employee ID | Password | Can |
+Select the role, enter the mobile number, then use the OTP shown in the *Demo SMS* box (or click **Autofill**).
+
+| Role | Mobile | Lands on | Can |
 |---|---|---|---|
-| **Geological Officer** (main demo) | `CMPDI001` | `demo123` | upload, process, validate, query AI, generate & approve reports, audit |
-| Administrator | `ADMIN001` | `admin123` | everything incl. user management |
-| Management | `MGMT001` | `demo123` | dashboards, analytics, reports, AI query, audit |
-| Viewer | `VIEW001` | `demo123` | search, view dashboards and reports |
+| **Geological Officer** (main demo) | `9876500001` | `/dashboard/officer` | upload, process, validate, resolve conflicts, query AI, generate & approve reports |
+| Administrator | `9876500002` | `/dashboard/admin` | everything + users, all workspaces, organisation-wide audit |
+| Management | `9876500003` | `/dashboard/management` | executive dashboard, analytics, reports & approvals, AI query, resolve conflicts |
+| Viewer | `9876500004` | `/dashboard/viewer` | search, dashboards, published reports (read-only) |
 
-Credentials are shown as clickable cards on the login page; roles can be switched live from the user menu.
+Any other valid mobile number (starting 6–9) creates a **new account** with the role you select, with its own workspace. The legacy Employee-ID endpoint (`POST /api/auth/login`, e.g. `CMPDI001 / demo123`) remains for API clients and the smoke test.
 
 ## 9. API documentation
 
@@ -190,7 +220,13 @@ Interactive OpenAPI docs at **`/docs`**. Main endpoints:
 
 | Method | Endpoint | Description |
 |---|---|---|
-| POST | `/api/auth/login` | Sign in (returns token + user + permissions) |
+| POST | `/api/auth/otp/request` | Request an OTP for `{mobile, role}` (role must match an existing account) |
+| POST | `/api/auth/otp/verify` | Verify OTP (creates the account for new numbers) → token, user, role dashboard path |
+| POST | `/api/auth/login` | Legacy Employee-ID sign-in (API clients / tests) |
+| GET | `/api/consistency` · `/api/consistency/figure?key=` | Consistency Guard scan / one figure |
+| POST | `/api/consistency/resolve` | Confirm the authoritative value with a reason |
+| GET | `/api/admin/overview` | Admin console (users, workspaces, services, activity) |
+| GET | `/api/ai/history` · `/api/ai/history/{id}` | The user's own query history (replayable) |
 | GET | `/api/dashboard` | KPIs, charts, recent activity |
 | GET | `/api/documents` | Document library (filters: `q`, `status`, `file_type`) |
 | POST | `/api/documents/upload` | Multipart upload with file validation |
@@ -207,27 +243,29 @@ Interactive OpenAPI docs at **`/docs`**. Main endpoints:
 | POST | `/api/reports/generate` · `/api/reports/{id}/approve` | Generate / approve |
 | GET | `/api/reports/{id}/download` | HTML report |
 | GET | `/api/analytics` · `/api/analytics/export?format=csv\|xlsx` | Analytics & export |
-| GET | `/api/audit-logs` · `/api/audit-logs/{id}` | Audit trail |
+| GET | `/api/audit-logs?scope=mine\|all` · `/api/audit-logs/{id}` | Own history; `scope=all` for administrators |
 | GET | `/api/search?q=` · `/api/notifications` · `/api/system/info` | Global search, notifications, system info |
-| POST | `/api/demo/reset` | Load Demo Scenario |
+| POST | `/api/demo/reset?scope=mine\|all` | Reset your own workspace; admins may rebuild all |
 
 ## 10. Database
 
-Tables: `users`, `mines`, `production_records`, `geological_records`, `documents`, `document_pages`, `extracted_fields`, `validation_records`, `knowledge_chunks`, `topics`, `ai_queries`, `ai_sources`, `reports`, `audit_logs`, `system_meta`.
+Tables: `users`, `otp_challenges`, `facts`, `fact_resolutions`, `mines`, `production_records`, `geological_records`, `documents`, `document_pages`, `extracted_fields`, `validation_records`, `knowledge_chunks`, `topics`, `ai_queries`, `ai_sources`, `reports`, `audit_logs`, `system_meta`.
 
-- The database is created and seeded automatically on first start.
+- The database is created and seeded automatically on first start (and rebuilt automatically if it was created by an older schema version).
+- Workspace-owned tables carry `owner_id`; reference data (mines, geology, topics) is shared.
 - `python -m scripts.seed_demo_data` (or **Load Demo Scenario** in the UI) resets it.
 - Dashboard / knowledge-base headline totals represent the organisation-wide archive (e.g. 1,248 documents); the demo library holds 17 individually indexed documents. Live actions increment the totals.
 
 ## 11. Demo workflow (5–10 minutes)
 
-1. Sign in as **CMPDI001 / demo123** → Dashboard (KPIs, charts, *new document awaiting processing*).
+1. On the login page select **Geological Officer**, enter **9876500001**, **Send OTP** → **Autofill** → lands on the officer dashboard (KPIs, charts, Consistency Guard score, *new document awaiting processing*).
 2. **Documents** → open *Gevra OCP Production Report FY 2024-25* → **Process Document** → watch the 7-stage pipeline; stage 6 reports ⚠ *3 fields require review*.
 3. **Review low-confidence fields** → extraction screen scrolls to *Land Reclaimed — 142 ha — 72 %* with the warning *Possible OCR ambiguity detected*. Show the OCR original `1 42 ha*` vs AI value, the normalisation panel and the highlighted page.
 4. **Edit** → enter the value → **Save correction** → **Approve** → *Validated ✓*. Approve the other two (dispatch, safety) → document becomes *Approved* and is published to the knowledge base.
 5. **Knowledge Base** → search *Gevra* → results with relevance, FY, mine and source.
 6. **AI Query** → *What was the production of Gevra OC Mine in FY 2024-25?* → answer "…approximately 52.4 MT … against a target of 55.0 MT, achieving approximately 95.3%…" with 3 sources (Gevra report p.23, Annual Production Summary p.8, CIL Production MIS p.12) → **View Source** (cited row highlighted).
    Also try: *Which mines exceeded their production targets?*, *Show the trend of coal production over the last 5 years*, the Hindi question, and an unsupported one such as *What is the price of coal in Japan?* (→ *No verified source found*).
+6b. **Consistency Guard** (the star feature) → 3 conflicts. Open *Overburden removal · Kusmunda OC*: 164.7 Mm³ (mine report + annual summary) vs 167.4 Mm³ (CIL MIS). Accept the recommendation with a reason → score rises; ask the AI about Kusmunda overburden → the answer now says the discrepancy was resolved.
 7. **Topic Intelligence** → topic cards, word cloud, trends → open *Land Reclamation*.
 8. **Report Studio** → Annual Mining Report · Gevra OC · FY 2024-25 → **Generate Report** → preview with draft disclaimer, citations and validation checks → **Approve for official use** / **Print / Save PDF**.
 9. **Analytics** → filters, charts, **Export Excel**.
@@ -266,6 +304,9 @@ Settings → AI Configuration shows the active model.
 - For production: PostgreSQL + pgvector, GPU node for OCR/LLM, TLS termination, SSO/LDAP instead of demo login, secrets in a vault, backups of the document store, VAPT and CERT-In-aligned hardening.
 
 ## Known limitations (prototype)
+
+- OTP delivery is simulated (shown on screen); production needs an SMS gateway (e.g. NIC SMS / DLT-registered provider) and should disable `DEMO_SHOW_OTP`.
+- Per-user workspaces are full copies of the sample dataset; a production deployment would share organisation-level verified records and scope drafts / history per user or team.
 
 - OCR, layout, table and entity extraction are **simulated**: uploaded files are validated and structurally parsed for real, but extracted content comes from templates driven by the sample dataset (mine / FY / report type are inferred from the filename).
 - Embeddings are a hashing stand-in for Sentence-BERT; retrieval quality on free-form questions is limited compared with a neural embedder.

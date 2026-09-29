@@ -33,34 +33,33 @@ def generate(body: ReportRequest, db: Session = Depends(get_db), user: dict = De
     return S.report(rep, full=True)
 
 
+def _own(db: Session, report_id: int, user: dict) -> Report:
+    r = db.get(Report, report_id)
+    if r is None or r.owner_id != user["id"]:
+        raise HTTPException(404, "Report not found")
+    return r
+
+
 @router.get("")
 def list_reports(db: Session = Depends(get_db), user: dict = Depends(current_user)):
-    return [S.report(r) for r in db.query(Report).order_by(Report.created_at.desc()).all()]
+    return [S.report(r) for r in db.query(Report).filter_by(owner_id=user["id"]).order_by(Report.created_at.desc()).all()]
 
 
 @router.get("/{report_id}")
 def get_report(report_id: int, db: Session = Depends(get_db), user: dict = Depends(current_user)):
-    r = db.get(Report, report_id)
-    if r is None:
-        raise HTTPException(404, "Report not found")
-    return S.report(r, full=True)
+    return S.report(_own(db, report_id, user), full=True)
 
 
 @router.post("/{report_id}/approve")
 def approve(report_id: int, db: Session = Depends(get_db), user: dict = Depends(require("approve_reports"))):
-    r = db.get(Report, report_id)
-    if r is None:
-        raise HTTPException(404, "Report not found")
-    return S.report(report_service.approve(db, r, user), full=True)
+    return S.report(report_service.approve(db, _own(db, report_id, user), user), full=True)
 
 
 @router.get("/{report_id}/download")
 def download(report_id: int, db: Session = Depends(get_db), user: dict = Depends(current_user)):
-    r = db.get(Report, report_id)
-    if r is None:
-        raise HTTPException(404, "Report not found")
-    audit_service.log(db, user=user["name"], role=user["role"], action="Downloaded report", category="report", status="Downloaded",
-                      document_label=r.title, source=r.report_no, commit=True)
+    r = _own(db, report_id, user)
+    audit_service.for_user(db, user, action="Downloaded report", category="report", status="Downloaded",
+                           document_label=r.title, source=r.report_no, commit=True)
     return Response(render_html(r), media_type="text/html",
                     headers={"Content-Disposition": f'attachment; filename="{r.report_no.replace("/", "_")}.html"'})
 

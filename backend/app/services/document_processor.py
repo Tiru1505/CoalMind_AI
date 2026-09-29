@@ -16,7 +16,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.database.demo_data import LATEST_VERIFIED_FY, PRODUCTION
-from app.models.models import Document, DocumentPage, ExtractedField, KnowledgeChunk, Mine
+from app.models.models import Document, DocumentPage, ExtractedField, Fact, KnowledgeChunk, Mine
 from app.services import audit_service, content_builder
 from app.services.embedding_service import get_embedder
 from app.services.ocr_service import OCR_ENGINE
@@ -105,6 +105,7 @@ def infer_profile(db: Session, filename: str) -> dict:
 # ------------------------------------------------------------------ persistence helpers
 
 def clear_outputs(db: Session, doc: Document) -> None:
+    db.query(Fact).filter_by(document_id=doc.id).delete()
     db.query(KnowledgeChunk).filter_by(document_id=doc.id).delete()
     db.query(ExtractedField).filter_by(document_id=doc.id).delete()
     db.query(DocumentPage).filter_by(document_id=doc.id).delete()
@@ -136,12 +137,14 @@ def persist_content(db: Session, doc: Document, content: dict, *, auto_status: b
     for c in content["chunks"]:
         page_conf = conf_by_page.get(c["page_number"])
         db.add(KnowledgeChunk(
-            document_id=doc.id, page_number=c["page_number"], section=c["section"], content=c["content"],
+            document_id=doc.id, owner_id=doc.owner_id, page_number=c["page_number"], section=c["section"], content=c["content"],
             mine_codes=c["mine_codes"], financial_year=c["financial_year"], topic=c["topic"], metrics=c["metrics"],
             embedding=embedder.embed(f"{doc.title}. {c['section']}. {c['content']}"),
             verified=c["page_number"] not in pending_pages,
             extraction_confidence=round(sum(page_conf) / len(page_conf), 1) if page_conf else 96.0,
         ))
+    for fc in content.get("facts", []):
+        db.add(Fact(owner_id=doc.owner_id, document_id=doc.id, **fc))
     confs = [f["confidence"] for f in content["fields"]]
     doc.confidence = round(sum(confs) / len(confs), 1) if confs else None
     doc.fields_extracted = content["fields_total"]

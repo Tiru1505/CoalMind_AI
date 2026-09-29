@@ -18,11 +18,10 @@ export default function AppLayout() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [notifications, setNotifications] = useState<Notification[]>([])
   const [pending, setPending] = useState(0)
-  const [key, setKey] = useState(0)
+  const [conflicts, setConflicts] = useState(0)
 
   const refresh = useCallback(() => {
-    api.notifications().then((r) => { setNotifications(r.items); setPending(r.pending_validation) }).catch(() => {})
-    setKey((k) => k + 1)
+    api.notifications().then((r) => { setNotifications(r.items); setPending(r.pending_validation); setConflicts(r.open_conflicts) }).catch(() => {})
   }, [])
 
   useEffect(() => { refresh() }, [refresh, loc.pathname, user?.id])
@@ -34,7 +33,7 @@ export default function AppLayout() {
     const flash = sessionStorage.getItem('cm.flash')
     if (flash) {
       sessionStorage.removeItem('cm.flash')
-      toast('success', 'Demo scenario ready', flash)
+      toast('success', flash.startsWith('Welcome') ? 'Account created' : 'Demo scenario ready', flash)
     }
   }, [toast])
   useEffect(() => { setMenuOpen(false); window.scrollTo(0, 0) }, [loc.pathname])
@@ -42,15 +41,15 @@ export default function AppLayout() {
   return (
     <RefreshCtx.Provider value={refresh}>
       <div className="min-h-screen flex">
-        <Sidebar pending={pending} open={menuOpen} onNavigate={() => setMenuOpen(false)} />
+        <Sidebar pending={pending} conflicts={conflicts} open={menuOpen} onNavigate={() => setMenuOpen(false)} />
         {menuOpen && <div className="fixed inset-0 bg-ink-950/40 z-40 lg:hidden" onClick={() => setMenuOpen(false)} />}
         <div className="flex-1 min-w-0 flex flex-col">
-          <Topbar notifications={notifications} onMenu={() => setMenuOpen(true)} refreshKey={key} />
+          <Topbar notifications={notifications} onMenu={() => setMenuOpen(true)} />
           <main className="flex-1 px-4 sm:px-6 lg:px-8 py-6 max-w-[1600px] w-full mx-auto">
             <Outlet key={user?.id} />
           </main>
           <footer className="px-8 py-4 text-[11.5px] text-slate-400 border-t border-slate-200 bg-white/60 flex flex-wrap gap-x-6 gap-y-1 no-print">
-            <span>CoalMind AI v1.0 · SIH 2026 · PS 26023 · Team Tubelights</span>
+            <span>CoalMind AI v1.1 · SIH 2026 · PS 26023 · Team Tubelights</span>
             <span>Prototype with sample demonstration data — not official CIL / CMPDI figures</span>
           </footer>
         </div>

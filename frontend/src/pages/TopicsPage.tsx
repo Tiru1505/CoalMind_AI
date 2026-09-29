@@ -29,7 +29,7 @@ export default function TopicsPage() {
 
       <div className="grid grid-cols-1 xl:grid-cols-[1.1fr_1fr] gap-5">
         <ChartCard title="Keyword Landscape" subtitle="Term prominence across indexed documents · click a term to search the Knowledge Base">
-          <div className="rounded-lg bg-gradient-to-b from-slate-50 to-white border border-slate-100">
+          <div className="rounded-lg bg-gradient-to-b from-slate-50 to-transparent border border-slate-100">
             <WordCloud words={data.keywords} onPick={(t) => nav(`/knowledge?q=${encodeURIComponent(t)}`)} />
           </div>
         </ChartCard>

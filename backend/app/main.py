@@ -9,7 +9,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import ai, analytics, audit, auth, dashboard, documents, knowledge, reports, system, topics, validation
+from app.api import admin, ai, analytics, audit, auth, consistency, dashboard, documents, knowledge, reports, system, topics, validation
 from app.database.seed import ensure_seeded
 
 
@@ -44,5 +44,5 @@ async def unhandled(request: Request, exc: Exception):
     return JSONResponse(status_code=500, content={"detail": "Internal error while processing the request. The event has been logged."})
 
 
-for r in (auth, dashboard, documents, validation, knowledge, ai, topics, reports, analytics, audit, system):
+for r in (auth, dashboard, documents, validation, knowledge, ai, topics, reports, analytics, audit, system, consistency, admin):
     app.include_router(r.router)

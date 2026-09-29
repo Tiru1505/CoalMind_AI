@@ -1,17 +1,32 @@
+"""Audit & history.
+
+Every user sees their own activity history (scope=mine). Administrators can
+additionally review the organisation-wide trail across all users (scope=all).
+"""
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.api import serializers as S
 from app.database.db import get_db
 from app.models.models import AuditLog
-from app.utils.security import require
+from app.utils.security import current_user
 
 router = APIRouter(prefix="/api/audit-logs", tags=["audit"])
 
 
+def _can_all(user: dict) -> bool:
+    return "view_all_audit" in user["permissions"]
+
+
 @router.get("")
-def list_logs(category: str = "", q: str = "", limit: int = 200, db: Session = Depends(get_db), user: dict = Depends(require("view_audit"))):
+def list_logs(category: str = "", q: str = "", scope: str = "mine", limit: int = 200,
+              db: Session = Depends(get_db), user: dict = Depends(current_user)):
     query = db.query(AuditLog)
+    if scope == "all":
+        if not _can_all(user):
+            raise HTTPException(403, "Only administrators can view the organisation-wide audit trail.")
+    else:
+        query = query.filter(AuditLog.owner_id == user["id"])
     if category:
         query = query.filter(AuditLog.category == category)
     rows = query.order_by(AuditLog.timestamp.desc(), AuditLog.id.desc()).limit(min(limit, 500)).all()
@@ -22,9 +37,9 @@ def list_logs(category: str = "", q: str = "", limit: int = 200, db: Session = D
 
 
 @router.get("/{log_id}")
-def get_log(log_id: int, db: Session = Depends(get_db), user: dict = Depends(require("view_audit"))):
+def get_log(log_id: int, db: Session = Depends(get_db), user: dict = Depends(current_user)):
     r = db.get(AuditLog, log_id)
-    if r is None:
+    if r is None or (r.owner_id != user["id"] and not _can_all(user)):
         raise HTTPException(404, "Audit entry not found")
     related = []
     if r.document_id:

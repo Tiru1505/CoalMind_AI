@@ -15,6 +15,7 @@ import { useApi } from '../hooks/useApi'
 import { useAuth } from '../context/AuthContext'
 import { fmtInt, greeting, surname, timeAgo } from '../utils/format'
 import { tooltipStyle } from '../utils/chart'
+import ConsistencyCard from '../components/ConsistencyCard'
 
 const KPI_ICON = { documents: FileCheck2, fields: Cpu, pending: ClipboardCheck, reports: BookMarked, queries: MessageSquareText, accuracy: Gauge }
 const KPI_LINK: Record<string, string> = { documents: '/documents', pending: '/validation', reports: '/reports', queries: '/ai-query', fields: '/knowledge', accuracy: '/audit' }
@@ -36,7 +37,7 @@ export default function DashboardPage() {
     <div className="animate-fade-in">
       <PageHeader
         title={`${greeting()}, ${surname(user!.name)}`}
-        subtitle="Here is the current intelligence overview across your mining data."
+        subtitle={`Geological Officer workspace · ${data.workspace.documents} documents · ${data.workspace.pending_fields} fields awaiting your validation`}
         actions={<>
           <Link to="/documents" className="btn-secondary"><Upload className="w-4 h-4" /> Upload document</Link>
           <Link to="/ai-query" className="btn-primary"><MessageSquareText className="w-4 h-4" /> Ask CoalMind AI</Link>
@@ -44,7 +45,7 @@ export default function DashboardPage() {
       />
 
       {demo && demo.status === 'Uploaded' && (
-        <div className="card mb-5 p-4 flex flex-wrap items-center gap-4 border-brand-200 bg-gradient-to-r from-brand-50/80 to-white">
+        <div className="card mb-5 p-4 flex flex-wrap items-center gap-4 border-brand-200 bg-gradient-to-r from-brand-50/80 to-transparent">
           <div className="w-10 h-10 rounded-lg bg-brand-600 text-white grid place-items-center"><PlayCircle className="w-5 h-5" /></div>
           <div className="flex-1 min-w-[240px]">
             <div className="text-[13.5px] font-semibold text-slate-800">New document awaiting processing</div>
@@ -162,13 +163,15 @@ export default function DashboardPage() {
         </ChartCard>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-5">
+      <div className="grid grid-cols-1 xl:grid-cols-[1.2fr_1fr] gap-5 mt-5">
+        <ConsistencyCard c={data.consistency} />
+        <div className="grid grid-cols-1 gap-3">
         {[
           { icon: FileSearch, t: 'Reporting', d: 'Structured reports assembled from verified records, with draft/approval workflow.', to: '/reports' },
           { icon: Activity, t: 'Topic Intelligence', d: 'Emerging themes, keywords and trends across the document archive.', to: '/topics' },
           { icon: MessageSquareText, t: 'AI Query', d: 'Natural-language questions answered only from verified, cited sources.', to: '/ai-query' },
         ].map(({ icon: I, t, d, to }) => (
-          <Link key={t} to={to} className="card p-4 flex gap-3 hover:border-brand-300 transition group">
+          <Link key={t} to={to} className="card px-4 py-3 flex gap-3 hover:border-brand-300 transition group">
             <span className="w-9 h-9 rounded-md bg-ink-900 text-coal-400 grid place-items-center shrink-0"><I className="w-4 h-4" /></span>
             <span>
               <span className="flex items-center gap-1.5 text-[13.5px] font-semibold text-slate-800">{t} <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /></span>
@@ -177,6 +180,7 @@ export default function DashboardPage() {
             <ArrowRight className="w-4 h-4 text-slate-300 group-hover:text-brand-500 ml-auto self-center shrink-0" />
           </Link>
         ))}
+        </div>
       </div>
     </div>
   )

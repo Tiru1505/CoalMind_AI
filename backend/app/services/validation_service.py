@@ -40,7 +40,7 @@ def _numeric(value: str) -> float | None:
 def _write_back(db: Session, doc: Document, f: ExtractedField) -> dict | None:
     if not f.record_column or doc.mine_id is None:
         return None
-    rec = db.query(ProductionRecord).filter_by(mine_id=doc.mine_id, financial_year=doc.financial_year).first()
+    rec = db.query(ProductionRecord).filter_by(owner_id=doc.owner_id, mine_id=doc.mine_id, financial_year=doc.financial_year).first()
     num = _numeric(effective_value(f))
     if rec is None or num is None:
         return None
@@ -60,15 +60,16 @@ def _refresh_document(db: Session, doc: Document) -> None:
         doc.status = "Approved"
 
 
-def _get(db: Session, field_id: int) -> tuple[ExtractedField, Document]:
+def _get(db: Session, field_id: int, user: dict) -> tuple[ExtractedField, Document]:
     f = db.get(ExtractedField, field_id)
-    if f is None:
+    doc = db.get(Document, f.document_id) if f else None
+    if f is None or doc is None or doc.owner_id != user["id"]:  # users only act on their own workspace
         raise ValidationError("Field not found")
-    return f, db.get(Document, f.document_id)
+    return f, doc
 
 
 def approve(db: Session, field_id: int, user: dict, comment: str = "") -> ExtractedField:
-    f, doc = _get(db, field_id)
+    f, doc = _get(db, field_id, user)
     prev = effective_value(f)
     f.status = "approved"
     f.validated_by = user["name"]
@@ -101,7 +102,7 @@ def edit(db: Session, field_id: int, user: dict, value: str, reason: str = "") -
         raise ValidationError("Corrected value cannot be empty")
     if len(value) > 120:
         raise ValidationError("Corrected value is too long")
-    f, doc = _get(db, field_id)
+    f, doc = _get(db, field_id, user)
     if _numeric(f.ai_value) is not None and _numeric(value) is None:
         raise ValidationError(f"'{f.label}' expects a numeric value (e.g. {f.ai_value})")
     prev = effective_value(f)
@@ -122,7 +123,7 @@ def edit(db: Session, field_id: int, user: dict, value: str, reason: str = "") -
 
 
 def reject(db: Session, field_id: int, user: dict, reason: str = "") -> ExtractedField:
-    f, doc = _get(db, field_id)
+    f, doc = _get(db, field_id, user)
     prev = effective_value(f)
     f.status = "rejected"
     f.validated_by = user["name"]

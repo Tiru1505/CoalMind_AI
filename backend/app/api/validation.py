@@ -13,19 +13,23 @@ router = APIRouter(prefix="/api/validation", tags=["validation"])
 
 @router.get("/queue")
 def queue(db: Session = Depends(get_db), user: dict = Depends(current_user)):
-    fields = (db.query(ExtractedField).filter(ExtractedField.status == "pending")
-              .order_by(ExtractedField.confidence).all())
+    def mine():
+        return db.query(ExtractedField).join(Document, Document.id == ExtractedField.document_id).filter(Document.owner_id == user["id"])
+
+    fields = mine().filter(ExtractedField.status == "pending").order_by(ExtractedField.confidence).all()
     docs = {d.id: d for d in db.query(Document).filter(Document.id.in_({f.document_id for f in fields})).all()}
-    recent = db.query(ValidationRecord).order_by(ValidationRecord.timestamp.desc()).limit(10).all()
+    my_field_ids = [f.id for f in mine().with_entities(ExtractedField.id).all()]
+    recent = (db.query(ValidationRecord).filter(ValidationRecord.field_id.in_(my_field_ids))
+              .order_by(ValidationRecord.timestamp.desc()).limit(10).all()) if my_field_ids else []
     recent_fields = {f.id: f for f in db.query(ExtractedField).filter(ExtractedField.id.in_({r.field_id for r in recent})).all()}
-    total = db.query(ExtractedField).count()
+    total = len(my_field_ids)
     return {
         "pending": [{**S.field(f), "document": S.document(docs[f.document_id])} for f in fields],
         "stats": {
             "pending": len(fields),
-            "approved": db.query(ExtractedField).filter_by(status="approved").count(),
-            "auto_accepted": db.query(ExtractedField).filter_by(status="auto_accepted").count(),
-            "rejected": db.query(ExtractedField).filter_by(status="rejected").count(),
+            "approved": mine().filter(ExtractedField.status == "approved").count(),
+            "auto_accepted": mine().filter(ExtractedField.status == "auto_accepted").count(),
+            "rejected": mine().filter(ExtractedField.status == "rejected").count(),
             "total": total,
             "threshold": V.AUTO_ACCEPT_THRESHOLD,
         },
@@ -59,6 +63,10 @@ def reject(field_id: int, body: RejectRequest | None = None, db: Session = Depen
 
 @router.get("/{field_id}/history")
 def history(field_id: int, db: Session = Depends(get_db), user: dict = Depends(current_user)):
+    f = db.get(ExtractedField, field_id)
+    doc = db.get(Document, f.document_id) if f else None
+    if doc is None or doc.owner_id != user["id"]:
+        raise HTTPException(404, "Field not found")
     rows = db.query(ValidationRecord).filter_by(field_id=field_id).order_by(ValidationRecord.timestamp).all()
     return [{"action": r.action, "previous_value": r.previous_value, "new_value": r.new_value, "reason": r.reason,
              "user": r.user, "timestamp": S.iso(r.timestamp)} for r in rows]

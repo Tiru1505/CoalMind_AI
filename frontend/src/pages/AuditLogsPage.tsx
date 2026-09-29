@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowRight, Bot, Download, Fingerprint, Lock, RefreshCw, Search, ShieldCheck } from 'lucide-react'
+import { ArrowRight, Bot, Download, Fingerprint, RefreshCw, Search, ShieldCheck } from 'lucide-react'
 import PageHeader from '../components/PageHeader'
 import AuditTable from '../components/AuditTable'
 import Modal from '../components/Modal'
@@ -16,16 +16,14 @@ import { cx, fmtDateTime, fmtTime } from '../utils/format'
 const CATS = [['', 'All events'], ['upload', 'Uploads'], ['processing', 'AI processing'], ['validation', 'Validation'], ['ai', 'AI queries'], ['report', 'Reports'], ['auth', 'Access'], ['system', 'System']]
 
 export default function AuditLogsPage() {
-  const { can } = useAuth()
+  const { can, user } = useAuth()
   const [cat, setCat] = useState('')
+  const [scope, setScope] = useState<'mine' | 'all'>('mine')
   const [q, setQ] = useState('')
   const [sel, setSel] = useState<AuditEntry | null>(null)
-  const { data, error, loading, reload } = useApi(() => api.auditLogs({ category: cat }), [cat])
+  const { data, error, loading, reload } = useApi(() => api.auditLogs({ category: cat, scope }), [cat, scope])
   const rows = useMemo(() => (data || []).filter((r) => !q || `${r.user} ${r.action} ${r.document} ${r.status} ${r.source}`.toLowerCase().includes(q.toLowerCase())), [data, q])
 
-  if (!can('view_audit')) {
-    return <div className="card"><EmptyState icon={Lock} title="Access restricted" body="Audit logs are available to Administrators, Geological Officers and Management." /></div>
-  }
 
   const exportCsv = () => {
     const head = ['Timestamp', 'User', 'Role', 'Action', 'Document', 'Status', 'Source']
@@ -39,7 +37,7 @@ export default function AuditLogsPage() {
 
   return (
     <div className="animate-fade-in">
-      <PageHeader title="Audit & Traceability" subtitle="Every upload, AI extraction, human validation, AI answer and report is recorded — every important AI decision is traceable."
+      <PageHeader title="Audit & History" subtitle={scope === 'all' ? 'Organisation-wide audit trail across every user workspace.' : `Your own activity history, ${user!.name} — every upload, extraction, validation, AI answer and report you worked on is traceable.`}
         actions={<>
           <button className="btn-secondary" onClick={() => reload()}><RefreshCw className="w-4 h-4" /> Refresh</button>
           <button className="btn-secondary" onClick={exportCsv}><Download className="w-4 h-4" /> Export</button>
@@ -56,6 +54,13 @@ export default function AuditLogsPage() {
       </div>
 
       <section className="card">
+        {can('view_all_audit') && (
+          <div className="flex gap-1 px-5 pt-3 border-b border-slate-100">
+            {([['mine', 'My activity'], ['all', 'All users (organisation)']] as const).map(([k, l]) => (
+              <button key={k} onClick={() => setScope(k)} className={cx('px-3 py-2 text-[12.5px] font-medium border-b-2 -mb-px', scope === k ? 'border-brand-600 text-brand-700' : 'border-transparent text-slate-500 hover:text-slate-700')}>{l}</button>
+            ))}
+          </div>
+        )}
         <div className="flex flex-wrap items-center gap-3 px-5 py-3.5 border-b border-slate-100">
           <div className="flex flex-wrap gap-1.5">
             {CATS.map(([k, l]) => (

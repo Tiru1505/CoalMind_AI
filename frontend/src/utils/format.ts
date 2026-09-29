@@ -34,5 +34,6 @@ export function greeting() {
 export function surname(name: string) {
   const parts = name.replace(/\./g, '. ').split(/\s+/).filter(Boolean)
   const title = parts[0]?.match(/^(Dr|Mr|Ms|Mrs|Prof)\.?$/i) ? parts[0].replace('.', '') + '. ' : ''
-  return title + parts[parts.length - 1]
+  // "Dr. Sharma" for titled names, otherwise the first name ("Kavita")
+  return title ? title + parts[parts.length - 1] : parts[0] || name
 }

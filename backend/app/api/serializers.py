@@ -44,5 +44,5 @@ def report(r: Report, full: bool = False) -> dict:
 
 
 def audit(a: AuditLog) -> dict:
-    return {"id": a.id, "timestamp": iso(a.timestamp), "user": a.user, "role": a.role, "action": a.action, "category": a.category,
+    return {"id": a.id, "timestamp": iso(a.timestamp), "owner_id": a.owner_id, "user": a.user, "role": a.role, "action": a.action, "category": a.category,
             "document_id": a.document_id, "document": a.document_label, "status": a.status, "source": a.source, "details": a.details}

@@ -1,5 +1,5 @@
 import type {
-  AIAnswer, AuditEntry, DashboardData, DocumentDetail, DocumentItem, ExtractionData, Field, Notification, Page,
+  AIAnswer, AuditEntry, ConsistencyScan, DashboardData, FigureCheck, DocumentDetail, DocumentItem, ExtractionData, Field, Notification, Page,
   ReportItem, SearchResult, Stage, Topic, User,
 } from '../types'
 
@@ -79,14 +79,19 @@ export interface SystemInfo {
 
 export const api = {
   login: (employee_id: string, password: string) => post<{ token: string; user: User }>('/auth/login', { employee_id, password }),
+  requestOtp: (mobile: string, role: string) =>
+    post<{ sent: boolean; mobile: string; is_new_user: boolean; expires_in: number; resend_in: number; name: string | null; demo_otp?: string }>(
+      '/auth/otp/request', { mobile, role }),
+  verifyOtp: (body: { mobile: string; role: string; otp: string; name?: string; department?: string }) =>
+    post<{ token: string; user: User; created: boolean; redirect: string }>('/auth/otp/verify', body),
   me: () => get<User>('/auth/me'),
   logout: () => post('/auth/logout'),
-  demoAccounts: () => get<{ employee_id: string; password: string; name: string; role: string; designation: string }[]>('/auth/demo-accounts'),
+  demoAccounts: () => get<{ mobile: string; name: string; role: string; designation: string }[]>('/auth/demo-accounts'),
 
   dashboard: () => get<DashboardData>('/dashboard'),
-  notifications: () => get<{ items: Notification[]; pending_validation: number }>('/notifications'),
+  notifications: () => get<{ items: Notification[]; pending_validation: number; open_conflicts: number }>('/notifications'),
   globalSearch: (q: string) => get<{ type: string; label: string; sub: string; link: string }[]>(`/search?q=${encodeURIComponent(q)}`),
-  resetDemo: () => post<{ ok: boolean }>('/demo/reset'),
+  resetDemo: (scope: 'mine' | 'all' = 'mine') => post<{ ok: boolean }>(`/demo/reset?scope=${scope}`),
   systemInfo: () => get<SystemInfo>('/system/info'),
 
   documents: (params: { q?: string; status?: string } = {}) =>
@@ -124,6 +129,13 @@ export const api = {
   aiSuggestions: () => get<string[]>('/ai/suggestions'),
   aiQuery: (question: string) => post<AIAnswer>('/ai/query', { question }),
   aiFeedback: (id: number, feedback: 'up' | 'down') => post(`/ai/${id}/feedback`, { feedback }),
+  aiHistory: () => get<{ id: number; question: string; grounded: boolean; intent: string; feedback: string | null; created_at: string; sources: number }[]>('/ai/history'),
+  aiHistoryItem: (id: number) => get<AIAnswer>(`/ai/history/${id}`),
+
+  consistency: () => get<ConsistencyScan>('/consistency'),
+  resolveFigure: (body: { key: string; value: number; reason: string; document_id?: number }) => post<FigureCheck>('/consistency/resolve', body),
+
+  adminOverview: () => get<AdminOverview>('/admin/overview'),
 
   topics: () => get<{ topics: Topic[]; trend: Record<string, number | string>[]; keywords: { term: string; weight: number }[]; model: string }>('/topics'),
   topic: (id: string) => get<Topic>(`/topics/${id}`),
@@ -140,7 +152,7 @@ export const api = {
   exportAnalytics: (format: 'csv' | 'xlsx', params: Record<string, string>) =>
     download(`/analytics/export?${new URLSearchParams({ format, ...params })}`, `coalmind_analytics.${format}`),
 
-  auditLogs: (params: { category?: string; q?: string } = {}) => get<AuditEntry[]>(`/audit-logs?${new URLSearchParams(params as Record<string, string>)}`),
+  auditLogs: (params: { category?: string; q?: string; scope?: 'mine' | 'all' } = {}) => get<AuditEntry[]>(`/audit-logs?${new URLSearchParams(params as Record<string, string>)}`),
   auditLog: (id: number) => get<AuditEntry>(`/audit-logs/${id}`),
 }
 
@@ -152,4 +164,13 @@ export interface AnalyticsData {
   by_mine: { mine: string; code: string; subsidiary: string; production: number; target: number; achievement: number; overburden: number; stripping_ratio: number; land: number; manpower: number; oms: number; safety: number; dispatch: number; status: string }[]
   forecast: { fy: string; actual: number | null; forecast: number | null }[]
   note: string
+}
+
+export interface AdminOverview {
+  kpis: { users: number; active_24h: number; workspaces: number; documents: number; chunks: number; queries: number; reports: number; failed: number; sign_ins_24h: number; failed_otp_24h: number }
+  users: { id: number; name: string; role: string; designation: string; employee_id: string; mobile: string; active: boolean; last_login: string | null; created_at: string; documents: number; processed: number; queries: number; reports: number }[]
+  by_role: { role: string; value: number }[]
+  activity: { day: string; events: number; queries: number }[]
+  services: { name: string; status: 'operational' | 'demo' | 'degraded'; detail: string }[]
+  recent: AuditEntry[]
 }

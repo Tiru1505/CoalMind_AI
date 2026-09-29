@@ -11,6 +11,7 @@ class User(Base):
     __tablename__ = "users"
     id: Mapped[int] = mapped_column(primary_key=True)
     employee_id: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    mobile: Mapped[str | None] = mapped_column(String(15), unique=True, index=True, nullable=True)
     password: Mapped[str] = mapped_column(String(128))  # demo only: sha256 hash
     name: Mapped[str] = mapped_column(String(120))
     role: Mapped[str] = mapped_column(String(40))  # admin | geological_officer | management | viewer
@@ -19,6 +20,20 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(160), default="")
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_login: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class OTPChallenge(Base):
+    """One-time password issued for mobile sign-in (stored as an HMAC, never in clear)."""
+    __tablename__ = "otp_challenges"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    mobile: Mapped[str] = mapped_column(String(15), index=True)
+    role: Mapped[str] = mapped_column(String(40))
+    code_hash: Mapped[str] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    consumed: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class Mine(Base):
@@ -41,6 +56,7 @@ class Mine(Base):
 class ProductionRecord(Base):
     __tablename__ = "production_records"
     id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     mine_id: Mapped[int] = mapped_column(ForeignKey("mines.id"), index=True)
     financial_year: Mapped[str] = mapped_column(String(12), index=True)
     coal_production_mt: Mapped[float] = mapped_column(Float)
@@ -78,6 +94,7 @@ class GeologicalRecord(Base):
 class Document(Base):
     __tablename__ = "documents"
     id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     filename: Mapped[str] = mapped_column(String(255))
     title: Mapped[str] = mapped_column(String(255))
     file_type: Mapped[str] = mapped_column(String(10))
@@ -167,6 +184,7 @@ class KnowledgeChunk(Base):
     __tablename__ = "knowledge_chunks"
     id: Mapped[int] = mapped_column(primary_key=True)
     document_id: Mapped[int] = mapped_column(ForeignKey("documents.id"), index=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     page_number: Mapped[int] = mapped_column(Integer)
     section: Mapped[str] = mapped_column(String(160), default="")
     content: Mapped[str] = mapped_column(Text)
@@ -183,6 +201,8 @@ class KnowledgeChunk(Base):
 class AIQuery(Base):
     __tablename__ = "ai_queries"
     id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)  # full answer for history replay
     question: Mapped[str] = mapped_column(Text)
     answer: Mapped[str] = mapped_column(Text)
     intent: Mapped[str] = mapped_column(String(40))
@@ -206,6 +226,7 @@ class AISource(Base):
 class Report(Base):
     __tablename__ = "reports"
     id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     report_no: Mapped[str] = mapped_column(String(40))
     title: Mapped[str] = mapped_column(String(255))
     report_type: Mapped[str] = mapped_column(String(80))
@@ -224,6 +245,7 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
     id: Mapped[int] = mapped_column(primary_key=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    owner_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True, nullable=True)  # workspace
     user: Mapped[str] = mapped_column(String(120))
     role: Mapped[str] = mapped_column(String(60), default="")
     action: Mapped[str] = mapped_column(String(255))
@@ -240,3 +262,38 @@ class SystemMeta(Base):
     __tablename__ = "system_meta"
     key: Mapped[str] = mapped_column(String(60), primary_key=True)
     value: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class Fact(Base):
+    """A single figure stated by a document (Consistency Guard).
+
+    The same figure (mine + FY + metric) is usually reported by several
+    documents; comparing them is how cross-source conflicts are detected.
+    """
+    __tablename__ = "facts"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    document_id: Mapped[int] = mapped_column(ForeignKey("documents.id"), index=True)
+    page_number: Mapped[int] = mapped_column(Integer)
+    mine_code: Mapped[str] = mapped_column(String(20), index=True)
+    financial_year: Mapped[str] = mapped_column(String(12), index=True)
+    metric: Mapped[str] = mapped_column(String(40), index=True)
+    value: Mapped[float] = mapped_column(Float)
+    unit: Mapped[str] = mapped_column(String(20), default="")
+    snippet: Mapped[str] = mapped_column(String(300), default="")
+    provisional: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class FactResolution(Base):
+    """Officer decision on which value is authoritative when sources disagree."""
+    __tablename__ = "fact_resolutions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    mine_code: Mapped[str] = mapped_column(String(20))
+    financial_year: Mapped[str] = mapped_column(String(12))
+    metric: Mapped[str] = mapped_column(String(40))
+    value: Mapped[float] = mapped_column(Float)
+    chosen_document_id: Mapped[int | None] = mapped_column(ForeignKey("documents.id"), nullable=True)
+    reason: Mapped[str] = mapped_column(String(300), default="")
+    user: Mapped[str] = mapped_column(String(120))
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
